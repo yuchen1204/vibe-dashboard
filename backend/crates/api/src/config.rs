@@ -44,6 +44,7 @@ fn default_db_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn clear_env() {
         env::remove_var("VIBE_DB_PATH");
@@ -52,6 +53,7 @@ mod tests {
         env::remove_var("APPDATA");
     }
 
+    #[serial]
     #[test]
     fn from_env_uses_defaults_when_unset() {
         clear_env();
@@ -61,6 +63,7 @@ mod tests {
         assert!(cfg.db_path.ends_with("data.db"));
     }
 
+    #[serial]
     #[test]
     fn from_env_reads_overrides() {
         clear_env();
@@ -74,6 +77,7 @@ mod tests {
         clear_env();
     }
 
+    #[serial]
     #[test]
     fn from_env_rejects_invalid_port() {
         clear_env();
@@ -83,6 +87,7 @@ mod tests {
         clear_env();
     }
 
+    #[serial]
     #[test]
     fn default_db_path_uses_appdata_on_windows() {
         clear_env();
