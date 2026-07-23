@@ -1,0 +1,28 @@
+# Rust
+backend/target/
+backend/**/*.rs.bk
+
+# SQLx 编译期缓存保留（不忽略 backend/.sqlx/）
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 环境与本地数据
+.env
+.env.local
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# OS
+~$*
