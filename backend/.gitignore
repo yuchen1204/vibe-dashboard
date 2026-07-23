@@ -1,0 +1,6 @@
+/target
+dev.db
+dev.db-journal
+dev.db-wal
+dev.db-shm
+.env
