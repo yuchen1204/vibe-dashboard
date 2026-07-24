@@ -17,6 +17,11 @@ export class WsClient {
   private status: WsStatus = "closed";
 
   connect(url: string) {
+    this.retries = 0;
+    this.open(url);
+  }
+
+  private open(url: string) {
     this.cleanup();
     this.setStatus("connecting");
     this.ws = new WebSocket(url);
@@ -52,7 +57,7 @@ export class WsClient {
     }
     const delay = BASE_DELAY_MS * Math.pow(2, this.retries);
     this.retries += 1;
-    this.retryTimer = setTimeout(() => this.connect(url), delay);
+    this.retryTimer = setTimeout(() => this.open(url), delay);
   }
 
   send(msg: ClientMsg) {
@@ -87,6 +92,7 @@ export class WsClient {
       this.ws.onmessage = null;
       this.ws.onclose = null;
       this.ws.onerror = null;
+      this.ws.close();
       this.ws = null;
     }
   }
