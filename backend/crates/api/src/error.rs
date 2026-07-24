@@ -4,39 +4,31 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use shared::AppError as DomainError;
 
-#[derive(Debug, thiserror::Error)]
-pub enum AppError {
-    #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
-    #[error("migration error: {0}")]
-    Migration(#[from] sqlx::migrate::MigrateError),
-    #[error("internal error: {0}")]
-    #[allow(dead_code)]
-    Internal(String),
-    #[error("bad request: {0}")]
-    #[allow(dead_code)]
-    BadRequest(String),
-    #[error("not found: {0}")]
-    #[allow(dead_code)]
-    NotFound(String),
+pub struct ApiError(pub DomainError);
+
+impl From<DomainError> for ApiError {
+    fn from(e: DomainError) -> Self {
+        ApiError(e)
+    }
 }
 
-pub type AppResult<T> = Result<T, AppError>;
-
-impl IntoResponse for AppError {
+impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            AppError::Database(_) | AppError::Migration(_) | AppError::Internal(_) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+        let (status, message) = match &self.0 {
+            DomainError::Database(_) | DomainError::Migration(_) | DomainError::Internal(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, self.0.to_string())
             }
-            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            DomainError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.0.to_string()),
+            DomainError::NotFound(_) => (StatusCode::NOT_FOUND, self.0.to_string()),
         };
-        tracing::error!(error = %self, status = %status, "request failed");
+        tracing::error!(error = %self.0, status = %status, "request failed");
         (status, Json(json!({ "error": message }))).into_response()
     }
 }
+
+pub type AppResult<T> = Result<T, ApiError>;
 
 #[cfg(test)]
 mod tests {
@@ -44,21 +36,21 @@ mod tests {
 
     #[test]
     fn database_error_maps_to_500() {
-        let err = AppError::Database(sqlx::Error::PoolClosed);
+        let err: ApiError = DomainError::Database(sqlx::Error::PoolClosed).into();
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
     fn bad_request_maps_to_400() {
-        let err = AppError::BadRequest("missing field".to_string());
+        let err: ApiError = DomainError::BadRequest("missing field".to_string()).into();
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn not_found_maps_to_404() {
-        let err = AppError::NotFound("widget".to_string());
+        let err: ApiError = DomainError::NotFound("widget".to_string()).into();
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
