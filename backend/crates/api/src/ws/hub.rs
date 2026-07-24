@@ -11,7 +11,6 @@ pub struct Hub {
     senders: DashMap<ConnId, mpsc::UnboundedSender<ServerMsg>>,
 }
 
-#[allow(dead_code)]
 impl Hub {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -41,12 +40,14 @@ impl Hub {
         }
     }
 
+    #[allow(dead_code)]
     pub fn broadcast(&self, msg: ServerMsg) {
         for entry in self.senders.iter() {
             let _ = entry.value().send(msg.clone());
         }
     }
 
+    #[allow(dead_code)]
     pub fn connection_count(&self) -> usize {
         self.senders.len()
     }

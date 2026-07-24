@@ -2,7 +2,6 @@ use axum::extract::ws::{Message, WebSocket};
 use futures::{sink::SinkExt, stream::StreamExt};
 use std::time::Duration;
 use tokio::time::{interval, Instant};
-use uuid::Uuid;
 
 use super::hub::Hub;
 use super::message::{ClientMsg, ServerMsg};
@@ -10,7 +9,6 @@ use super::message::{ClientMsg, ServerMsg};
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[allow(dead_code)]
 pub async fn handle_connection(ws: WebSocket, hub: std::sync::Arc<Hub>) {
     let (id, mut rx) = hub.register();
     let (mut ws_sink, mut ws_stream) = ws.split();
@@ -77,9 +75,4 @@ pub async fn handle_connection(ws: WebSocket, hub: std::sync::Arc<Hub>) {
     }
 
     hub.unregister(id);
-}
-
-#[allow(dead_code)]
-fn _ensure_uuid_imported() -> Uuid {
-    Uuid::new_v4()
 }

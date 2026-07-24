@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -14,10 +12,13 @@ pub enum AppError {
     #[error("migration error: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("internal error: {0}")]
+    #[allow(dead_code)]
     Internal(String),
     #[error("bad request: {0}")]
+    #[allow(dead_code)]
     BadRequest(String),
     #[error("not found: {0}")]
+    #[allow(dead_code)]
     NotFound(String),
 }
 
