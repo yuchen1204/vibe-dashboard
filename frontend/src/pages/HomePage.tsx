@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import type { HealthResponse, ServerMsg } from "@/types/api";
 
 export function HomePage() {
   const { wsStatus, connectionId, pingPongLatency, setWsStatus, setConnectionId, setPingPongLatency } = useUiStore();
-  const [pingSentAt, setPingSentAt] = useState<number | null>(null);
+  const pingSentAtRef = useRef<number | null>(null);
 
   const healthQuery = useQuery({
     queryKey: ["health"],
@@ -24,7 +24,7 @@ export function HomePage() {
     const unsubStatus = wsClient.onStatus((status) => {
       setWsStatus(status);
       if (status === "open") {
-        setPingSentAt(null);
+        pingSentAtRef.current = null;
         setPingPongLatency(0);
       }
     });
@@ -33,9 +33,9 @@ export function HomePage() {
       if (msg.type === "hello") {
         setConnectionId(msg.payload.connection_id);
       } else if (msg.type === "pong") {
-        if (pingSentAt) {
-          setPingPongLatency(Date.now() - pingSentAt);
-          setPingSentAt(null);
+        if (pingSentAtRef.current != null) {
+          setPingPongLatency(Date.now() - pingSentAtRef.current);
+          pingSentAtRef.current = null;
         }
       }
     });
@@ -48,7 +48,7 @@ export function HomePage() {
   }, []);
 
   const handlePing = () => {
-    setPingSentAt(Date.now());
+    pingSentAtRef.current = Date.now();
     wsClient.send({ type: "ping" });
   };
 
