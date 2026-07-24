@@ -156,7 +156,9 @@ backend/crates/tasks/
 - `tasks` dev-依赖：`db`（测试里跑 migration）、`tokio`（`#[tokio::test]`）。
 - `api` 新增依赖 `tasks`（path）。
 
-**错误类型归属决策**：把 L1 的 `AppError`（及 `AppResult`）从 `api::error` **下沉到 `shared::error`**。`shared` crate 不依赖 axum，因此 `IntoResponse` impl 留在 `api` 侧（`impl IntoResponse for shared::AppError`），`api/error.rs` 改为 re-export 或保留兼容别名。`tasks`、未来的 execution/orchestrator/review crate 都依赖 `shared` 拿到同一错误类型，避免层层转换。这是 L1 的小重构（移动类型 + 调整 import），代价可接受。
+**错误类型归属决策**：把 L1 的 `AppError`（及 `AppResult`）从 `api::error` **下沉到 `shared::error`**，作为跨 crate 共享的领域错误（`tasks`/未来的 execution/orchestrator/review crate 都依赖 `shared` 拿到它，避免层层转换）。
+
+`shared` crate 不依赖 axum。由于 Rust 孤儿规则，`api` 不能直接 `impl axum::IntoResponse for shared::AppError`（trait 和类型对 api 都是外部的）。因此 `api` 侧引入一个薄包装 `ApiError(pub shared::AppError)`，在 api 内 `impl IntoResponse for ApiError`（包装类型对 api 是本地的，满足孤儿规则），并提供 `From<shared::AppError> for ApiError`。`api::AppResult<T> = Result<T, ApiError>` 沿用 `AppResult` 名字（L1 的 `health.rs` 等无需改签名）。handler 用 `?` 传播 repo 返回的 `shared::AppError` 时由 `From` 自动转成 `ApiError`。这是 L1 的小重构，代价可接受。
 
 ## SQLx 工作流
 
