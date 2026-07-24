@@ -1,11 +1,16 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/query";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { HomePage } from "@/pages/HomePage";
+
 function App() {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="container">
-        <h1 className="text-2xl font-bold mt-8">Vibe Dashboard</h1>
-        <p className="text-muted-foreground mt-2">L1 基础设施层 - 脚手架就绪</p>
+    <QueryClientProvider client={queryClient}>
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <HomePage />
       </div>
-    </div>
+    </QueryClientProvider>
   );
 }
 
