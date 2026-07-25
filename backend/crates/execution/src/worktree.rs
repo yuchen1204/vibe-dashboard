@@ -3,8 +3,8 @@ use tokio::process::Command;
 
 use shared::{AppError, AppResult};
 
-/// Run `git worktree add` in the given repo path.
-/// Returns the path of the created worktree.
+/// Run `git worktree add -b <branch> <path>` in the given repo path.
+/// Creates the branch and worktree in one step, without touching the main repo's current branch.
 pub async fn create_worktree(
     repo_path: &Path,
     branch: &str,
@@ -14,8 +14,9 @@ pub async fn create_worktree(
         .args([
             "worktree",
             "add",
-            worktree_path.to_str().unwrap_or(""),
+            "-b",
             branch,
+            worktree_path.to_str().unwrap_or(""),
         ])
         .current_dir(repo_path)
         .output()
@@ -86,29 +87,6 @@ pub async fn list_worktree_paths(repo_path: &Path) -> AppResult<Vec<String>> {
     }
 
     Ok(paths)
-}
-
-/// Create a new branch from the current HEAD (or default branch) in the repo.
-pub async fn create_branch(repo_path: &Path, branch: &str) -> AppResult<()> {
-    let output = Command::new("git")
-        .args(["checkout", "-b", branch])
-        .current_dir(repo_path)
-        .output()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to spawn git: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // If branch already exists locally, try to just use it
-        if stderr.contains("already exists") {
-            return Ok(());
-        }
-        return Err(AppError::Internal(format!(
-            "git checkout -b failed: {stderr}"
-        )));
-    }
-
-    Ok(())
 }
 
 /// Check if a path is a valid git repository.

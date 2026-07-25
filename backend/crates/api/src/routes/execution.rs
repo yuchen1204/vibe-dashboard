@@ -107,10 +107,17 @@ pub async fn execute_todo(
         .join(format!("{}-worktree", branch));
 
     // Check if git repo and prepare worktree
+    // Use single-step `git worktree add -b` to avoid touching the main repo's branch
     let is_git_repo = execution::worktree::is_git_repo(ws_path).await;
     let wt_path_str = if is_git_repo {
-        let _ = execution::worktree::create_branch(ws_path, &branch).await;
-        let _ = execution::worktree::create_worktree(ws_path, &branch, &wt_path).await;
+        execution::worktree::create_worktree(ws_path, &branch, &wt_path)
+            .await
+            .map_err(|e| {
+                let msg = format!("worktree creation failed: {e}");
+                tracing::error!(todo_id = %tid, "{}", msg);
+                shared::AppError::Internal(msg)
+            })?;
+
         let _ = repo::create_worktree(
             &state.db,
             &target.workspace_id,
@@ -119,6 +126,7 @@ pub async fn execute_todo(
             Some(&target.id),
         )
         .await;
+
         wt_path.to_string_lossy().to_string()
     } else {
         ws_path.to_string_lossy().to_string()
@@ -198,33 +206,9 @@ pub async fn execute_todo(
                             // No-op, keep waiting
                         }
                         None => {
-                            // Channel closed, process likely exited
+                            // Channel closed — wait task already sent Status via exit code
                             break;
                         }
-                    }
-                }
-
-                // If we exited without a terminal status, check exit code
-                let current = repo::get_job(&db, &job_id).await;
-                if let Ok(j) = current {
-                    if j.status == "running" || j.status == "pending" {
-                        // Channel closed but no status update — mark as failed
-                        let _ = repo::update_job_status(&db, &job_id, JobStatus::Failed, None).await;
-                        hub.broadcast(ServerMsg::job_status(
-                            job_id.clone(),
-                            todo_id.clone(),
-                            "failed".to_string(),
-                        ));
-                        let _ = tasks::repo::update_todo(
-                            &db,
-                            &todo_id,
-                            tasks::UpdateTodo {
-                                status: Some(tasks::TodoStatus::Blocked),
-                                ..Default::default()
-                            },
-                        )
-                        .await;
-                        executor.remove(&job_id);
                     }
                 }
             }

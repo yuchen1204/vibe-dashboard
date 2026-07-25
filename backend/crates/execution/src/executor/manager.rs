@@ -77,9 +77,8 @@ impl ExecutorManager {
 
     /// 取消一个运行中的 job
     pub async fn cancel(&self, job_id: &str) -> AppResult<()> {
-        if let Some(mut entry) = self.active.get_mut(job_id) {
+        if let Some(entry) = self.active.get(job_id) {
             entry.kill().await?;
-            // 移除后 drop 会自动释放
             drop(entry);
             self.active.remove(job_id);
             tracing::info!(job_id = %job_id, "cancelled active job");

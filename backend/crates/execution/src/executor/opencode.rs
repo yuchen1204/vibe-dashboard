@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 
-use super::{ExecContext, Executor};
+use super::{ExecContext, Executor, JsonLinesParser, OutputParser};
 
 /// OpenCode executor
 ///
@@ -58,6 +59,11 @@ impl Executor for OpenCodeExecutor {
     /// OpenCode 默认无超时，用户不 cancel 就一直跑
     fn default_timeout(&self) -> Option<Duration> {
         None
+    }
+
+    /// OpenCode 输出 JSON Lines，使用 JsonLinesParser 解析结构化事件
+    fn parser(&self) -> Arc<dyn OutputParser> {
+        Arc::new(JsonLinesParser)
     }
 }
 

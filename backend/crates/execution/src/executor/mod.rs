@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
-use tokio::sync::mpsc;
+use tokio::process::Command;
+use tokio::sync::{mpsc, Notify};
+use tokio::time::sleep;
 
 pub mod claude;
 pub mod manager;
@@ -22,7 +24,7 @@ use crate::models::JobStatus;
 pub enum ExecutorEvent {
     /// 普通日志行（stdout/stderr 文本）
     Log { text: String },
-    /// 状态变更（executor 主动报告，如 opencode 解析出 task_completed 事件）
+    /// 状态变更（executor 主动报告，或退出码兜底）
     Status { status: JobStatus },
     /// 保活心跳（用于长时间无输出的任务，前端可显示"仍在跑"）
     Heartbeat,
@@ -61,28 +63,18 @@ impl ExecContext {
 }
 
 /// 运行中的 executor 句柄
+///
+/// 只持有取消信号 - 子进程由 spawn 内部启动的 wait task 拥有，
+/// wait task 负责等待退出码并发送终态 Status 事件。
 pub struct ExecutorHandle {
-    child: Child,
+    cancel: Arc<Notify>,
     pub job_id: String,
 }
 
 impl ExecutorHandle {
-    /// 等待进程退出，返回 exit code
-    pub async fn wait(&mut self) -> AppResult<i32> {
-        let status = self
-            .child
-            .wait()
-            .await
-            .map_err(|e| AppError::Internal(format!("agent process error: {e}")))?;
-        Ok(status.code().unwrap_or(-1))
-    }
-
-    /// 强制 kill 进程
-    pub async fn kill(&mut self) -> AppResult<()> {
-        self.child
-            .kill()
-            .await
-            .map_err(|e| AppError::Internal(format!("failed to kill agent: {e}")))?;
+    /// 请求取消：通知 wait task 中断 select 并 kill 进程
+    pub async fn kill(&self) -> AppResult<()> {
+        self.cancel.notify_one();
         Ok(())
     }
 }
@@ -101,7 +93,17 @@ pub trait Executor: Send + Sync {
         None
     }
 
+    /// 此 executor 的输出解析器，默认按纯文本逐行发 Log
+    fn parser(&self) -> Arc<dyn OutputParser> {
+        Arc::new(PlainTextParser)
+    }
+
     /// 启动 agent 进程，返回 handle + 事件流 receiver
+    ///
+    /// 默认实现做了三件事：
+    /// 1. 用 parser 解析 stdout/stderr 每一行（而非无脑发 Log）
+    /// 2. 起一个 wait task，在子进程退出后按退出码发终态 Status
+    /// 3. wait task 同时监听取消信号和超时，任一触发先 kill 再发 Status
     async fn spawn(
         &self,
         ctx: ExecContext,
@@ -113,7 +115,6 @@ pub trait Executor: Send + Sync {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        // 注入 env
         for (k, v) in &ctx.envs {
             cmd.env(k, v);
         }
@@ -122,58 +123,103 @@ pub trait Executor: Send + Sync {
             .spawn()
             .map_err(|e| AppError::Internal(format!("failed to spawn {}: {e}", self.name())))?;
 
-        // 启动超时看门狗
-        if let Some(timeout) = ctx.timeout.or(self.default_timeout()) {
-            let tx_timeout = tx.clone();
-            let job_id = ctx.job_id.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(timeout).await;
-                // 超时只发 Status，让上层决定是否 kill
-                let _ = tx_timeout.send(ExecutorEvent::Heartbeat);
-                tracing::warn!(job_id = %job_id, ?timeout, "executor timeout fired");
-            });
-        }
+        let parser = self.parser();
 
-        // 读 stdout -> Log 事件
+        // 读 stdout -> 用 parser 解析
         if let Some(stdout) = child.stdout.take() {
             let tx = tx.clone();
+            let parser = parser.clone();
             tokio::spawn(async move {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    if tx.send(ExecutorEvent::Log { text: format!("{line}\n") }).is_err() {
-                        break;
+                    for event in parser.parse_line(&line) {
+                        if tx.send(event).is_err() {
+                            return;
+                        }
                     }
                 }
             });
         }
 
-        // 读 stderr -> Log 事件
+        // 读 stderr -> 用 parser 解析
         if let Some(stderr) = child.stderr.take() {
             let tx = tx.clone();
+            let parser = parser.clone();
             tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    if tx.send(ExecutorEvent::Log { text: format!("{line}\n") }).is_err() {
-                        break;
+                    for event in parser.parse_line(&line) {
+                        if tx.send(event).is_err() {
+                            return;
+                        }
                     }
                 }
             });
         }
 
+        // wait task - 拥有 child 和原始 tx，负责发终态 Status
+        let cancel = Arc::new(Notify::new());
+        let cancel_wait = cancel.clone();
+        let timeout = ctx.timeout.or(self.default_timeout());
+        let job_id = ctx.job_id.clone();
+        let tx_wait = tx; // 原始 tx 移入 wait task，drop 后 channel 关闭
+
+        tokio::spawn(async move {
+            let mut child = child;
+
+            let status = tokio::select! {
+                exit = child.wait() => {
+                    match exit {
+                        Ok(s) => {
+                            let code = s.code().unwrap_or(-1);
+                            tracing::info!(job_id = %job_id, exit_code = code, "agent exited");
+                            if code == 0 { JobStatus::Success } else { JobStatus::Failed }
+                        }
+                        Err(e) => {
+                            tracing::error!(job_id = %job_id, error = %e, "agent wait error");
+                            JobStatus::Failed
+                        }
+                    }
+                }
+                _ = cancel_wait.notified() => {
+                    tracing::info!(job_id = %job_id, "agent cancelled by user");
+                    JobStatus::Cancelled
+                }
+                _ = maybe_timeout(timeout) => {
+                    tracing::warn!(job_id = %job_id, "agent timed out, killing");
+                    JobStatus::Failed
+                }
+            };
+
+            // 显式 drop child：kill_on_drop 会在进程仍在跑时发 SIGKILL
+            drop(child);
+
+            let _ = tx_wait.send(ExecutorEvent::Status { status });
+            // tx_wait drop 后 channel 关闭，rx.recv() 返回 None
+        });
+
         Ok((
             ExecutorHandle {
-                child,
+                cancel,
                 job_id: ctx.job_id.clone(),
             },
             rx,
         ))
     }
 
-    /// 取消运行中的 agent（默认实现：直接 kill）
-    async fn cancel(&self, handle: &mut ExecutorHandle) -> AppResult<()> {
+    /// 取消运行中的 agent（默认实现：通知 wait task）
+    async fn cancel(&self, handle: &ExecutorHandle) -> AppResult<()> {
         handle.kill().await
+    }
+}
+
+/// timeout 为 None 时永远 pending，否则 sleep
+async fn maybe_timeout(timeout: Option<Duration>) {
+    match timeout {
+        Some(t) => sleep(t).await,
+        None => std::future::pending::<()>().await,
     }
 }
 
@@ -315,5 +361,77 @@ mod tests {
         assert_eq!(ctx.job_id, "job-1");
         assert_eq!(ctx.envs.get("API_KEY").unwrap(), "secret");
         assert_eq!(ctx.timeout, Some(Duration::from_secs(300)));
+    }
+
+    // ---------- 退出码兜底集成测试 ----------
+
+    struct ExitZeroExecutor;
+
+    #[async_trait]
+    impl Executor for ExitZeroExecutor {
+        fn name(&self) -> &'static str {
+            "exit-zero"
+        }
+        fn build_command(&self, _ctx: &ExecContext) -> Command {
+            if cfg!(windows) {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/c", "exit", "0"]);
+                cmd
+            } else {
+                Command::new("true")
+            }
+        }
+    }
+
+    struct ExitNonZeroExecutor;
+
+    #[async_trait]
+    impl Executor for ExitNonZeroExecutor {
+        fn name(&self) -> &'static str {
+            "exit-nonzero"
+        }
+        fn build_command(&self, _ctx: &ExecContext) -> Command {
+            if cfg!(windows) {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/c", "exit", "1"]);
+                cmd
+            } else {
+                Command::new("false")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_reports_success_on_exit_zero() {
+        let ex = ExitZeroExecutor;
+        let ctx = ExecContext::new("j1".into(), ".".into(), "test".into());
+        let (_handle, mut rx) = ex.spawn(ctx).await.unwrap();
+
+        let mut got_status = false;
+        while let Some(event) = rx.recv().await {
+            if let ExecutorEvent::Status { status } = event {
+                assert_eq!(status, JobStatus::Success);
+                got_status = true;
+                break;
+            }
+        }
+        assert!(got_status, "should receive Status::Success for exit 0");
+    }
+
+    #[tokio::test]
+    async fn spawn_reports_failed_on_exit_nonzero() {
+        let ex = ExitNonZeroExecutor;
+        let ctx = ExecContext::new("j2".into(), ".".into(), "test".into());
+        let (_handle, mut rx) = ex.spawn(ctx).await.unwrap();
+
+        let mut got_status = false;
+        while let Some(event) = rx.recv().await {
+            if let ExecutorEvent::Status { status } = event {
+                assert_eq!(status, JobStatus::Failed);
+                got_status = true;
+                break;
+            }
+        }
+        assert!(got_status, "should receive Status::Failed for exit != 0");
     }
 }
