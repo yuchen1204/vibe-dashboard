@@ -46,13 +46,13 @@ impl Executor for OpenCodeExecutor {
     }
 
     fn build_command(&self, ctx: &ExecContext) -> Command {
-        let mut cmd = Command::new(&self.bin_path);
-        cmd.arg("--task").arg(&ctx.prompt).current_dir(&ctx.worktree_path);
-
+        let mut args = vec!["--task", &ctx.prompt];
         if let Some(model) = &self.model {
-            cmd.args(["--model", model]);
+            args.push("--model");
+            args.push(model);
         }
-
+        let mut cmd = super::prepare_command(&self.bin_path, &args);
+        cmd.current_dir(&ctx.worktree_path);
         cmd
     }
 
@@ -77,7 +77,11 @@ mod tests {
         let ctx = ExecContext::new("j1".into(), "/tmp/wt".into(), "do it".into());
         let cmd = ex.build_command(&ctx);
         let program = cmd.as_std().get_program().to_str().unwrap().to_string();
-        assert_eq!(program, "opencode");
+        if cfg!(windows) {
+            assert_eq!(program, "cmd", "on Windows should wrap with cmd /C");
+        } else {
+            assert_eq!(program, "opencode");
+        }
         let args: Vec<_> = cmd.as_std().get_args().map(|a| a.to_str().unwrap().to_string()).collect();
         assert!(args.contains(&"--task".to_string()));
     }

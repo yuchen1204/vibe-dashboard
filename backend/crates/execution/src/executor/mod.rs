@@ -19,6 +19,31 @@ use shared::{AppError, AppResult};
 
 use crate::models::JobStatus;
 
+// ---------- Windows shell wrapper ----------
+
+/// 在 Windows 上，通过 npm 全局安装的 CLI（claude、opencode 等）本质是 `.cmd` 批处理脚本，
+/// 不是 PE 可执行文件。`CreateProcessW` 无法直接执行这类脚本，会报 `ERROR_BAD_EXE_FORMAT (193)`。
+///
+/// 这里的 wrapper 将命令通过 `cmd /C` 包装一层，让 shell 去解析扩展名和 PATHEXT。
+#[cfg(windows)]
+pub fn prepare_command(program: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::new("cmd");
+    cmd.arg("/C").arg(program);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd
+}
+
+#[cfg(not(windows))]
+pub fn prepare_command(program: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::new(program);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd
+}
+
 /// 统一输出事件 - 所有 executor 实现都把异构输出转换成这个
 #[derive(Debug, Clone)]
 pub enum ExecutorEvent {
