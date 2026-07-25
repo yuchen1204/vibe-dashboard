@@ -15,11 +15,49 @@ export interface PongPayload {
 
 export type ServerMsg =
   | { type: "hello"; payload: HelloPayload }
-  | { type: "pong"; payload: PongPayload };
+  | { type: "pong"; payload: PongPayload }
+  | { type: "job_output"; payload: { job_id: string; text: string } }
+  | { type: "job_status"; payload: { job_id: string; todo_id: string; status: string } };
 
 export type ClientMsg = { type: "ping" };
 
-// ---------- L2 业务类型 ----------
+// ---------- L3 执行层类型 ----------
+
+export interface Worktree {
+  id: string;
+  workspace_id: string;
+  target_id: string | null;
+  branch: string;
+  path: string;
+  status: "active" | "merged" | "abandoned";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorktree {
+  branch: string;
+  target_id?: string;
+}
+
+export type JobStatus = "pending" | "running" | "success" | "failed" | "cancelled";
+
+export interface ExecutionJob {
+  id: string;
+  todo_id: string;
+  worktree_id: string | null;
+  status: JobStatus;
+  agent_type: string;
+  prompt: string;
+  output: string;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExecuteTodo {
+  agent_type?: string;
+}
 
 export interface Workspace {
   id: string;

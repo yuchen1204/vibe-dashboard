@@ -10,6 +10,8 @@ import {
 import { useUpdateTodo, useDeleteTodo } from "@/hooks/useTodos";
 import type { Target, Todo, TodoStatus } from "@/types/api";
 import { TodoDialog } from "./TodoDialog";
+import { ExecuteButton } from "@/components/execution/ExecuteButton";
+import { useExecutionStore } from "@/stores/execution";
 
 const TODO_STATUSES: TodoStatus[] = ["todo", "doing", "done", "blocked"];
 const STATUS_LABEL: Record<TodoStatus, string> = {
@@ -29,6 +31,8 @@ export function TodoCard({ workspaceId, todo, targets }: Props) {
   const update = useUpdateTodo(workspaceId);
   const del = useDeleteTodo(workspaceId);
   const target = targets.find((t) => t.id === todo.target_id);
+  const jobRecord = useExecutionStore((s) => s.jobByTodo[todo.id]);
+  const runningJobId = jobRecord?.jobId ?? null;
 
   return (
     <div className="rounded-md border bg-background p-3 space-y-2">
@@ -66,6 +70,11 @@ export function TodoCard({ workspaceId, todo, targets }: Props) {
             ))}
           </SelectContent>
         </Select>
+        <ExecuteButton
+          workspaceId={workspaceId}
+          todo={todo}
+          runningJobId={runningJobId}
+        />
         <TodoDialog
           workspaceId={workspaceId}
           targets={targets}

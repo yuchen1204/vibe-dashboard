@@ -3,10 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { getJson } from "@/lib/api";
 import { wsClient } from "@/lib/ws";
 import { useUiStore } from "@/stores/ui";
+import { useExecutionStore } from "@/stores/execution";
 import type { HealthResponse, ServerMsg } from "@/types/api";
 
 export function useGlobalStatus() {
   const { setWsStatus, setConnectionId, setPingPongLatency } = useUiStore();
+  const setJobStatus = useExecutionStore((s) => s.setJobStatus);
   const pingSentAtRef = useRef<number | null>(null);
 
   const healthQuery = useQuery({
@@ -36,6 +38,8 @@ export function useGlobalStatus() {
           setPingPongLatency(Date.now() - pingSentAtRef.current);
           pingSentAtRef.current = null;
         }
+      } else if (msg.type === "job_status") {
+        setJobStatus(msg.payload.job_id, msg.payload.todo_id, msg.payload.status);
       }
     });
 
