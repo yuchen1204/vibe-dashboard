@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod discovery;
 pub mod dispatch;
 pub mod executor;
 pub mod models;

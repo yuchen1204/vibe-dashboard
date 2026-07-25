@@ -22,10 +22,36 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: SqlitePool, hub: Arc<Hub>, config: Config) -> Self {
         let mut manager = ExecutorManager::new();
-        manager.register_all(vec![
-            Box::new(execution::executor::claude::ClaudeCodeExecutor::new()),
-            Box::new(execution::executor::opencode::OpenCodeExecutor::new()),
-        ]);
+
+        // 自动发现 PATH 中的 coding agent
+        let discovered = execution::discovery::discover_agents();
+        for (agent_type, bin_path) in &discovered {
+            match *agent_type {
+                "claude-code" => {
+                    manager.register(Box::new(
+                        execution::executor::claude::ClaudeCodeExecutor::new()
+                            .with_bin_path(bin_path.clone()),
+                    ));
+                }
+                "opencode" => {
+                    manager.register(Box::new(
+                        execution::executor::opencode::OpenCodeExecutor::new()
+                            .with_bin_path(bin_path.clone()),
+                    ));
+                }
+                _ => {
+                    tracing::warn!(agent_type = %agent_type, "unknown discovered agent type");
+                }
+            }
+        }
+
+        if discovered.is_empty() {
+            tracing::warn!(
+                "no coding agents discovered on PATH (searched for: claude, opencode). \
+                 Execute will fail until one is installed."
+            );
+        }
+
         Self {
             db,
             hub,
