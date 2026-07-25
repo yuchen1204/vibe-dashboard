@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO targets (id, workspace_id, title, description, status, sort_order, created_at, updated_at)\n           VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "7517b0736934f88b12cec59ab5b3c6eca23c5dd1c4fc642c9cc4abcd501fa0d4"
+}
