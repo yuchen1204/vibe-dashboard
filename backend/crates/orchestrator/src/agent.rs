@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 
 use crate::llm::{self, ChatCompletionRequest, LlmConfig};
 use crate::session::{ChatMessage, Role, Session};
-use crate::tools;
+use crate::tools::{self, ToolContext};
 
 /// 编排 Agent 单次对话的结果
 #[derive(Debug, Clone)]
@@ -23,6 +23,7 @@ pub async fn run_agent(
     session: &mut Session,
     pool: &SqlitePool,
     config: &LlmConfig,
+    tool_ctx: &ToolContext,
 ) -> Result<AgentResponse, String> {
     if !config.is_configured() {
         // 无 LLM 配置时返回模拟回复
@@ -90,7 +91,7 @@ pub async fn run_agent(
                 .unwrap_or(serde_json::json!({"error": "invalid arguments"}));
 
             // 执行工具
-            let result = tools::execute_tool(pool, &session.workspace_id, &call.function.name, &args)
+            let result = tools::execute_tool(pool, &session.workspace_id, &call.function.name, &args, tool_ctx)
                 .await
                 .unwrap_or_else(|e| format!("Error: {e}"));
 

@@ -7,9 +7,26 @@ use axum::{
 use crate::error::AppResult;
 use crate::state::AppState;
 use crate::ws::message::ServerMsg;
-use execution::executor::ExecContext;
-use execution::repo;
-use execution::{ExecuteTodo, JobStatus};
+use execution::dispatch::JobNotifier;
+use execution::ExecuteTodo;
+
+/// HubNotifier - 将 job 事件广播到所有 WS 连接
+struct HubNotifier(std::sync::Arc<crate::ws::Hub>);
+
+#[async_trait::async_trait]
+impl JobNotifier for HubNotifier {
+    async fn on_job_output(&self, job_id: &str, text: &str) {
+        self.0.broadcast(ServerMsg::job_output(job_id.to_string(), text.to_string()));
+    }
+
+    async fn on_job_status(&self, job_id: &str, todo_id: &str, status: &str) {
+        self.0.broadcast(ServerMsg::job_status(
+            job_id.to_string(),
+            todo_id.to_string(),
+            status.to_string(),
+        ));
+    }
+}
 
 // ---------- Worktrees ----------
 
@@ -17,7 +34,7 @@ pub async fn list_worktrees(
     State(state): State<AppState>,
     Path(wid): Path<String>,
 ) -> AppResult<Json<Vec<execution::Worktree>>> {
-    Ok(Json(repo::list_worktrees(&state.db, &wid).await?))
+    Ok(Json(execution::repo::list_worktrees(&state.db, &wid).await?))
 }
 
 pub async fn create_worktree(
@@ -37,7 +54,7 @@ pub async fn create_worktree(
 
     execution::worktree::create_worktree(ws_path, &input.branch, &wt_path).await?;
 
-    let wt = repo::create_worktree(
+    let wt = execution::repo::create_worktree(
         &state.db,
         &wid,
         &input.branch,
@@ -53,13 +70,13 @@ pub async fn delete_worktree(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
-    let wt = repo::get_worktree(&state.db, &id).await?;
+    let wt = execution::repo::get_worktree(&state.db, &id).await?;
     let ws = tasks::repo::get_workspace(&state.db, &wt.workspace_id).await?;
     let ws_path = std::path::Path::new(&ws.workspace.path);
     let wt_path = std::path::Path::new(&wt.path);
 
     let _ = execution::worktree::remove_worktree(ws_path, wt_path).await;
-    repo::delete_worktree(&state.db, &id).await?;
+    execution::repo::delete_worktree(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -69,14 +86,14 @@ pub async fn list_jobs(
     State(state): State<AppState>,
     Path(wid): Path<String>,
 ) -> AppResult<Json<Vec<execution::ExecutionJob>>> {
-    Ok(Json(repo::list_jobs_by_workspace(&state.db, &wid).await?))
+    Ok(Json(execution::repo::list_jobs_by_workspace(&state.db, &wid).await?))
 }
 
 pub async fn get_job(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<Json<execution::ExecutionJob>> {
-    Ok(Json(repo::get_job(&state.db, &id).await?))
+    Ok(Json(execution::repo::get_job(&state.db, &id).await?))
 }
 
 pub async fn execute_todo(
@@ -84,146 +101,17 @@ pub async fn execute_todo(
     Path(tid): Path<String>,
     Json(input): Json<ExecuteTodo>,
 ) -> AppResult<Json<execution::ExecutionJob>> {
-    let todo = tasks::repo::get_todo(&state.db, &tid).await?;
-    let target = tasks::repo::get_target(&state.db, &todo.target_id).await?;
-    let ws = tasks::repo::get_workspace(&state.db, &target.workspace_id).await?;
-
-    let ws_path = std::path::Path::new(&ws.workspace.path);
     let agent_type = input.agent_type.unwrap_or_else(|| "claude-code".to_string());
-    let prompt = format!(
-        "Execute the following task:\n\nTitle: {}\nDescription: {}\n\nPlease implement this change.",
-        todo.title, todo.description
-    );
+    let notifier = std::sync::Arc::new(HubNotifier(state.hub.clone()));
 
-    // Create job record
-    let job = repo::create_job(&state.db, &tid, &prompt, &agent_type).await?;
-    let job_id = job.id.clone();
-
-    // Determine worktree path
-    let branch = format!("todo-{}", &todo.id[..8]);
-    let wt_path = ws_path
-        .parent()
-        .unwrap_or(ws_path)
-        .join(format!("{}-worktree", branch));
-
-    // Check if git repo and prepare worktree
-    // Use single-step `git worktree add -b` to avoid touching the main repo's branch
-    let is_git_repo = execution::worktree::is_git_repo(ws_path).await;
-    let wt_path_str = if is_git_repo {
-        execution::worktree::create_worktree(ws_path, &branch, &wt_path)
-            .await
-            .map_err(|e| {
-                let msg = format!("worktree creation failed: {e}");
-                tracing::error!(todo_id = %tid, "{}", msg);
-                shared::AppError::Internal(msg)
-            })?;
-
-        let _ = repo::create_worktree(
-            &state.db,
-            &target.workspace_id,
-            &branch,
-            &wt_path.to_string_lossy(),
-            Some(&target.id),
-        )
-        .await;
-
-        wt_path.to_string_lossy().to_string()
-    } else {
-        ws_path.to_string_lossy().to_string()
-    };
-
-    // Update job to running
-    let _ = repo::update_job_status(&state.db, &job_id, JobStatus::Running, None).await?;
-    state.hub.broadcast(ServerMsg::job_status(
-        job_id.clone(),
-        tid.clone(),
-        "running".to_string(),
-    ));
-
-    // Build exec context
-    let ctx = ExecContext::new(job_id.clone(), wt_path_str, prompt);
-
-    // Spawn via executor manager
-    let hub = state.hub.clone();
-    let db = state.db.clone();
-    let todo_id = tid.clone();
-    let executor = state.executor.clone();
-
-    tokio::spawn(async move {
-        match executor.spawn(&agent_type, ctx).await {
-            Ok(mut rx) => {
-                use execution::executor::ExecutorEvent;
-                loop {
-                    match rx.recv().await {
-                        Some(ExecutorEvent::Log { text }) => {
-                            let _ = repo::append_job_output(&db, &job_id, &text).await;
-                            hub.broadcast(ServerMsg::job_output(job_id.clone(), text));
-                        }
-                        Some(ExecutorEvent::Status { status }) => {
-                            let status_str = status.as_str().to_string();
-                            let _ = repo::update_job_status(
-                                &db,
-                                &job_id,
-                                status,
-                                None,
-                            )
-                            .await;
-                            hub.broadcast(ServerMsg::job_status(
-                                job_id.clone(),
-                                todo_id.clone(),
-                                status_str,
-                            ));
-                            if matches!(
-                                status,
-                                JobStatus::Success | JobStatus::Failed | JobStatus::Cancelled
-                            ) {
-                                if status == JobStatus::Success {
-                                    let _ = tasks::repo::update_todo(
-                                        &db,
-                                        &todo_id,
-                                        tasks::UpdateTodo {
-                                            status: Some(tasks::TodoStatus::Done),
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .await;
-                                } else if status == JobStatus::Failed {
-                                    let _ = tasks::repo::update_todo(
-                                        &db,
-                                        &todo_id,
-                                        tasks::UpdateTodo {
-                                            status: Some(tasks::TodoStatus::Blocked),
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .await;
-                                }
-                                executor.remove(&job_id);
-                                break;
-                            }
-                        }
-                        Some(ExecutorEvent::Heartbeat) => {
-                            // No-op, keep waiting
-                        }
-                        None => {
-                            // Channel closed — wait task already sent Status via exit code
-                            break;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to spawn executor");
-                let _ = repo::update_job_status(&db, &job_id, JobStatus::Failed, None).await;
-                hub.broadcast(ServerMsg::job_status(
-                    job_id.clone(),
-                    todo_id.clone(),
-                    "failed".to_string(),
-                ));
-                executor.remove(&job_id);
-            }
-        }
-    });
+    let job = execution::dispatch::execute_todo(
+        &state.db,
+        state.executor.clone(),
+        notifier as std::sync::Arc<dyn JobNotifier>,
+        &tid,
+        &agent_type,
+    )
+    .await?;
 
     Ok(Json(job))
 }
@@ -235,7 +123,7 @@ pub async fn cancel_job(
     // Cancel via manager first (kill process)
     let _ = state.executor.cancel(&id).await;
     // Then update DB
-    let job = repo::cancel_job(&state.db, &id).await?;
+    let job = execution::repo::cancel_job(&state.db, &id).await?;
     state.hub.broadcast(ServerMsg::job_status(
         job.id.clone(),
         job.todo_id.clone(),

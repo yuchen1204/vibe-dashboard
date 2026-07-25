@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 shared = { path = "../shared" }
+tasks = { path = "../tasks" }
 sqlx.workspace = true
 uuid.workspace = true
 chrono.workspace = true

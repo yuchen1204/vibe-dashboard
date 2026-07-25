@@ -1,6 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{interval, Instant};
 
@@ -53,6 +54,13 @@ pub async fn handle_connection(ws: WebSocket, state: AppState) {
         let llm_config = state.llm_config.clone();
         let pool = state.db.clone();
         let hub = state.hub.clone();
+        let executor = state.executor.clone();
+
+        // Build ToolContext with executor + HubNotifier
+        let tool_ctx = orchestrator::ToolContext {
+            executor: Some(executor),
+            notifier: Some(Arc::new(HubNotifier(hub.clone()))),
+        };
 
         while let Some(Ok(msg)) = ws_stream.next().await {
             match msg {
@@ -65,7 +73,7 @@ pub async fn handle_connection(ws: WebSocket, state: AppState) {
                             ClientMsg::ChatMessage { text, workspace_id } => {
                                 handle_chat_message(
                                     &hub, id, &mut sessions, &llm_config, &pool,
-                                    &workspace_id, &text,
+                                    &workspace_id, &text, &tool_ctx,
                                 ).await;
                             }
                         }
@@ -95,6 +103,25 @@ pub async fn handle_connection(ws: WebSocket, state: AppState) {
     hub.unregister(id);
 }
 
+/// HubNotifier - 将 job 事件广播到所有 WS 连接
+struct HubNotifier(Arc<super::hub::Hub>);
+
+#[async_trait::async_trait]
+impl execution::dispatch::JobNotifier for HubNotifier {
+    async fn on_job_output(&self, job_id: &str, text: &str) {
+        self.0.broadcast(ServerMsg::job_output(job_id.to_string(), text.to_string()));
+    }
+
+    async fn on_job_status(&self, job_id: &str, todo_id: &str, status: &str) {
+        self.0.broadcast(ServerMsg::job_status(
+            job_id.to_string(),
+            todo_id.to_string(),
+            status.to_string(),
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_chat_message(
     hub: &super::hub::Hub,
     conn_id: ConnId,
@@ -103,6 +130,7 @@ async fn handle_chat_message(
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
     text: &str,
+    tool_ctx: &orchestrator::ToolContext,
 ) {
     // Get or create session for this workspace
     let mut session = sessions
@@ -114,7 +142,7 @@ async fn handle_chat_message(
 
     // Run the agent
     if llm_config.is_configured() {
-        match orchestrator::agent::run_agent(&mut session, pool, llm_config).await {
+        match orchestrator::agent::run_agent(&mut session, pool, llm_config, tool_ctx).await {
             Ok(response) => {
                 // Send tool calls
                 for tc in &response.tool_calls {

@@ -1,8 +1,31 @@
+use std::sync::Arc;
+
 use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::llm::ToolDefinition;
 use crate::llm::ToolFunction;
+
+/// 工具执行上下文 - 包含需要执行 todo 时所需的额外依赖
+pub struct ToolContext {
+    pub executor: Option<Arc<execution::executor::ExecutorManager>>,
+    pub notifier: Option<Arc<dyn execution::dispatch::JobNotifier>>,
+}
+
+impl ToolContext {
+    pub fn new() -> Self {
+        Self {
+            executor: None,
+            notifier: None,
+        }
+    }
+}
+
+impl Default for ToolContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// 工具执行结果
 #[derive(Debug, Clone)]
@@ -17,12 +40,13 @@ pub async fn execute_tool(
     workspace_id: &str,
     name: &str,
     arguments: &Value,
+    ctx: &ToolContext,
 ) -> Result<String, String> {
     match name {
         "list_targets" => cmd_list_targets(pool, workspace_id, arguments).await,
         "list_todos" => cmd_list_todos(pool, workspace_id, arguments).await,
         "create_todo" => cmd_create_todo(pool, arguments).await,
-        "execute_todo" => cmd_execute_todo(pool, arguments).await,
+        "execute_todo" => cmd_execute_todo(pool, arguments, ctx).await,
         "get_job_result" => cmd_get_job_result(pool, arguments).await,
         _ => Err(format!("unknown tool: {name}")),
     }
@@ -198,29 +222,42 @@ async fn cmd_create_todo(pool: &SqlitePool, args: &Value) -> Result<String, Stri
     ))
 }
 
-async fn cmd_execute_todo(pool: &SqlitePool, args: &Value) -> Result<String, String> {
+async fn cmd_execute_todo(pool: &SqlitePool, args: &Value, ctx: &ToolContext) -> Result<String, String> {
     let todo_id = args
         .get("todo_id")
         .and_then(|v| v.as_str())
         .ok_or("missing todo_id")?;
 
-    // We can't actually call the API route from here, so we create a job
-    // and let the caller poll for results
-    let todo = tasks::repo::get_todo(pool, todo_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let (executor, notifier) = match (&ctx.executor, &ctx.notifier) {
+        (Some(exec), Some(notif)) => (exec.clone(), notif.clone()),
+        _ => {
+            // Fallback: no executor configured, just create a job record (legacy path)
+            let todo = tasks::repo::get_todo(pool, todo_id)
+                .await
+                .map_err(|e| e.to_string())?;
 
-    let prompt = format!(
-        "Execute the following task:\n\nTitle: {}\nDescription: {}\n\nPlease implement this change.",
-        todo.title, todo.description
-    );
+            let prompt = format!(
+                "Execute the following task:\n\nTitle: {}\nDescription: {}\n\nPlease implement this change.",
+                todo.title, todo.description
+            );
 
-    let job = execution::repo::create_job(pool, todo_id, &prompt, "claude-code")
+            let job = execution::repo::create_job(pool, todo_id, &prompt, "claude-code")
+                .await
+                .map_err(|e| e.to_string())?;
+
+            return Ok(format!(
+                "Job created (id: {}, status: {}). The todo is queued for execution.",
+                job.id, job.status
+            ));
+        }
+    };
+
+    let job = execution::dispatch::execute_todo(pool, executor, notifier, todo_id, "claude-code")
         .await
         .map_err(|e| e.to_string())?;
 
     Ok(format!(
-        "Job created (id: {}, status: {}). The todo is queued for execution.",
+        "Job created and dispatched (id: {}, status: {}). A coding agent is now working on this task.",
         job.id, job.status
     ))
 }

@@ -5,3 +5,4 @@ pub mod tools;
 
 pub use session::ChatMessage;
 pub use session::Role;
+pub use tools::ToolContext;

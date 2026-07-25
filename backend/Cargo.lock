@@ -37,6 +37,7 @@ name = "api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "chrono",
  "dashmap",
@@ -471,6 +472,7 @@ dependencies = [
  "serde_json",
  "shared",
  "sqlx",
+ "tasks",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
