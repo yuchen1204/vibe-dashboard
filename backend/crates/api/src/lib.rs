@@ -14,6 +14,7 @@ use tower_http::trace::TraceLayer;
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(routes::health::health))
+        .route("/api/path-suggest", get(routes::path::path_suggest))
         .route(
             "/api/workspaces",
             get(routes::tasks::list_workspaces).post(routes::tasks::create_workspace),

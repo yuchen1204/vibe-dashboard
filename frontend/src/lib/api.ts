@@ -27,6 +27,9 @@ async function request<T>(
     throw new ApiError(res.status, message);
   }
 
+  if (res.status === 204) {
+    return undefined as T;
+  }
   return res.json() as Promise<T>;
 }
 
@@ -44,4 +47,15 @@ export function putJson<T>(path: string, body: unknown): Promise<T> {
 
 export function del<T>(path: string): Promise<T> {
   return request<T>("DELETE", path);
+}
+
+export interface PathSuggestResponse {
+  paths: string[];
+}
+
+export async function getPathSuggestions(q: string): Promise<string[]> {
+  const data = await getJson<PathSuggestResponse>(
+    `/api/path-suggest?q=${encodeURIComponent(q)}`,
+  );
+  return data.paths;
 }
