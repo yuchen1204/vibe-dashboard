@@ -4,9 +4,18 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "api"
+path = "src/main.rs"
+
 [dependencies]
 shared = { path = "../shared" }
 db = { path = "../db" }
+tasks = { path = "../tasks" }
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true
@@ -27,3 +36,4 @@ tokio-stream.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 serial_test = "3"
+tempfile = "3.27.0"

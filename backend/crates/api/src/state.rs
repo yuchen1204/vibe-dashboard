@@ -8,7 +8,6 @@ use crate::ws::Hub;
 
 #[derive(Clone)]
 pub struct AppState {
-    #[allow(dead_code)]
     pub db: SqlitePool,
     pub hub: Arc<Hub>,
     #[allow(dead_code)]

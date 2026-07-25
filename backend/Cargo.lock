@@ -47,6 +47,8 @@ dependencies = [
  "serial_test",
  "shared",
  "sqlx",
+ "tasks",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

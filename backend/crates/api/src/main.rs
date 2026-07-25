@@ -1,16 +1,8 @@
-mod config;
-mod error;
-mod routes;
-mod state;
-mod ws;
-
-use axum::{routing::get, Router};
-use tower_http::trace::TraceLayer;
 use tracing::info;
 
-use crate::config::Config;
-use crate::state::AppState;
-use crate::ws::Hub;
+use api::config::Config;
+use api::state::AppState;
+use api::ws::Hub;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hub = Hub::new();
     let state = AppState::new(pool, hub, config.clone());
 
-    let app = build_router(state.clone());
+    let app = api::app(state.clone());
 
     let addr = format!("127.0.0.1:{}", config.http_port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -36,14 +28,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("server stopped");
     Ok(())
-}
-
-fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/health", get(routes::health::health))
-        .route("/ws", get(routes::ws::ws_handler))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }
 
 async fn shutdown_signal() {
