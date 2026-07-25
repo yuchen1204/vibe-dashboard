@@ -41,7 +41,7 @@ pub struct CreateWorktree {
 
 // ---------- ExecutionJob ----------
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     #[default]
