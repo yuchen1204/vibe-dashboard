@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO execution_jobs (id, todo_id, status, agent_type, prompt, output, created_at, updated_at)\n           VALUES (?, ?, ?, ?, ?, '', ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "be4909ab058d54960aabbcf335cf6c9b0f17f8a6285daac1760f7c4231a18973"
+}

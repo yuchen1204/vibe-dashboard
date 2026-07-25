@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE execution_jobs SET output = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "ce3e7333cc20cdf16abce19ca58158574e30d229ac35adccb53820c3d2a73923"
+}

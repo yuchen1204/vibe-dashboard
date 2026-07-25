@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE worktrees SET status = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "113b68eab36251c1d34d58c7f5a10fe8f2d79c3b5135772ce7083aacdbd5dac4"
+}

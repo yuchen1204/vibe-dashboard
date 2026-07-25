@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM worktrees WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4ac96fbaf22d97df980f7a210532531e900edbd9fbc445d00c5f5ba1ffdffcec"
+}

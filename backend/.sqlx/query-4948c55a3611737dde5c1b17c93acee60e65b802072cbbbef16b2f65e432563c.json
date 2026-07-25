@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, workspace_id, target_id, branch, path, status, created_at, updated_at\n           FROM worktrees\n           WHERE workspace_id = ?\n           ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "workspace_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "branch",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "path",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 7,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4948c55a3611737dde5c1b17c93acee60e65b802072cbbbef16b2f65e432563c"
+}
