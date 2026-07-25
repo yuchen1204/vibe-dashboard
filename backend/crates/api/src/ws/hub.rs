@@ -1,5 +1,6 @@
-use dashmap::DashMap;
 use std::sync::Arc;
+
+use dashmap::DashMap;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -51,20 +52,11 @@ impl Hub {
     pub fn connection_count(&self) -> usize {
         self.senders.len()
     }
-
-    pub fn handle_client_msg(&self, id: ConnId, msg: super::message::ClientMsg) {
-        match msg {
-            super::message::ClientMsg::Ping => {
-                let _ = self.send_to(id, ServerMsg::pong());
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ws::message::ClientMsg;
 
     #[tokio::test]
     async fn register_returns_unique_ids() {
@@ -109,14 +101,5 @@ mod tests {
         hub.broadcast(ServerMsg::pong());
         assert!(rx1.recv().await.is_some());
         assert!(rx2.recv().await.is_some());
-    }
-
-    #[tokio::test]
-    async fn handle_ping_replies_pong() {
-        let hub = Hub::new();
-        let (id, mut rx) = hub.register();
-        hub.handle_client_msg(id, ClientMsg::Ping);
-        let msg = rx.recv().await.expect("should receive pong");
-        assert!(matches!(msg, ServerMsg::Pong { .. }));
     }
 }

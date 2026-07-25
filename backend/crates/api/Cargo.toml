@@ -17,6 +17,7 @@ shared = { path = "../shared" }
 db = { path = "../db" }
 tasks = { path = "../tasks" }
 execution = { path = "../execution" }
+orchestrator = { path = "../orchestrator" }
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true

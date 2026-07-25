@@ -1,15 +1,18 @@
 use axum::extract::ws::{Message, WebSocket};
+use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
 use std::time::Duration;
 use tokio::time::{interval, Instant};
 
-use super::hub::Hub;
+use crate::state::AppState;
+use super::hub::ConnId;
 use super::message::{ClientMsg, ServerMsg};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub async fn handle_connection(ws: WebSocket, hub: std::sync::Arc<Hub>) {
+pub async fn handle_connection(ws: WebSocket, state: AppState) {
+    let hub = state.hub.clone();
     let (id, mut rx) = hub.register();
     let (mut ws_sink, mut ws_stream) = ws.split();
 
@@ -44,13 +47,29 @@ pub async fn handle_connection(ws: WebSocket, hub: std::sync::Arc<Hub>) {
         }
     });
 
-    let hub_recv = std::sync::Arc::clone(&hub);
     let recv_task = tokio::spawn(async move {
         let mut last_pong = Instant::now();
+        let mut sessions: DashMap<String, orchestrator::session::Session> = DashMap::new();
+        let llm_config = state.llm_config.clone();
+        let pool = state.db.clone();
+        let hub = state.hub.clone();
+
         while let Some(Ok(msg)) = ws_stream.next().await {
             match msg {
                 Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text) {
-                    Ok(client_msg) => hub_recv.handle_client_msg(id, client_msg),
+                    Ok(client_msg) => {
+                        match client_msg {
+                            ClientMsg::Ping => {
+                                let _ = hub.send_to(id, ServerMsg::pong());
+                            }
+                            ClientMsg::ChatMessage { text, workspace_id } => {
+                                handle_chat_message(
+                                    &hub, id, &mut sessions, &llm_config, &pool,
+                                    &workspace_id, &text,
+                                ).await;
+                            }
+                        }
+                    }
                     Err(e) => {
                         tracing::warn!(conn_id = %id, error = %e, "invalid ws message");
                     }
@@ -66,7 +85,6 @@ pub async fn handle_connection(ws: WebSocket, hub: std::sync::Arc<Hub>) {
                 break;
             }
         }
-        let _ = id;
     });
 
     tokio::select! {
@@ -75,4 +93,59 @@ pub async fn handle_connection(ws: WebSocket, hub: std::sync::Arc<Hub>) {
     }
 
     hub.unregister(id);
+}
+
+async fn handle_chat_message(
+    hub: &super::hub::Hub,
+    conn_id: ConnId,
+    sessions: &mut DashMap<String, orchestrator::session::Session>,
+    llm_config: &orchestrator::llm::LlmConfig,
+    pool: &sqlx::SqlitePool,
+    workspace_id: &str,
+    text: &str,
+) {
+    // Get or create session for this workspace
+    let mut session = sessions
+        .entry(workspace_id.to_string())
+        .or_insert_with(|| orchestrator::session::Session::new(workspace_id));
+
+    // Add user message
+    session.add(orchestrator::ChatMessage::user(text));
+
+    // Run the agent
+    if llm_config.is_configured() {
+        match orchestrator::agent::run_agent(&mut session, pool, llm_config).await {
+            Ok(response) => {
+                // Send tool calls
+                for tc in &response.tool_calls {
+                    hub.send_to(conn_id, ServerMsg::chat_tool_call(
+                        tc.name.clone(),
+                        tc.arguments.clone(),
+                    ));
+                    hub.send_to(conn_id, ServerMsg::chat_tool_result(
+                        tc.name.clone(),
+                        tc.result.clone(),
+                    ));
+                }
+                // Send final response
+                hub.send_to(conn_id, ServerMsg::chat_response(response.response));
+            }
+            Err(e) => {
+                hub.send_to(conn_id, ServerMsg::chat_error(e));
+            }
+        }
+    } else {
+        let resp = orchestrator::agent::run_agent_mock(&mut session, pool).await;
+        for tc in &resp.tool_calls {
+            hub.send_to(conn_id, ServerMsg::chat_tool_call(
+                tc.name.clone(),
+                tc.arguments.clone(),
+            ));
+            hub.send_to(conn_id, ServerMsg::chat_tool_result(
+                tc.name.clone(),
+                tc.result.clone(),
+            ));
+        }
+        hub.send_to(conn_id, ServerMsg::chat_response(resp.response));
+    }
 }

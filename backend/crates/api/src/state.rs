@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use execution::executor::ExecutorManager;
+use orchestrator::llm::LlmConfig;
 use sqlx::SqlitePool;
 
 use crate::config::Config;
@@ -14,6 +15,7 @@ pub struct AppState {
     #[allow(dead_code)]
     pub config: Arc<Config>,
     pub executor: Arc<ExecutorManager>,
+    pub llm_config: LlmConfig,
     pub started_at: DateTime<Utc>,
 }
 
@@ -29,6 +31,7 @@ impl AppState {
             hub,
             config: Arc::new(config),
             executor: Arc::new(manager),
+            llm_config: LlmConfig::from_env(),
             started_at: Utc::now(),
         }
     }

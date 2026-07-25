@@ -17,9 +17,15 @@ export type ServerMsg =
   | { type: "hello"; payload: HelloPayload }
   | { type: "pong"; payload: PongPayload }
   | { type: "job_output"; payload: { job_id: string; text: string } }
-  | { type: "job_status"; payload: { job_id: string; todo_id: string; status: string } };
+  | { type: "job_status"; payload: { job_id: string; todo_id: string; status: string } }
+  | { type: "chat_response"; payload: { text: string } }
+  | { type: "chat_tool_call"; payload: { tool_name: string; args: unknown } }
+  | { type: "chat_tool_result"; payload: { tool_name: string; result: string } }
+  | { type: "chat_error"; payload: { message: string } };
 
-export type ClientMsg = { type: "ping" };
+export type ClientMsg =
+  | { type: "ping" }
+  | { type: "chat_message"; payload: { text: string; workspace_id: string } };
 
 // ---------- L3 执行层类型 ----------
 

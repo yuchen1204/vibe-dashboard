@@ -6,6 +6,10 @@ use uuid::Uuid;
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ClientMsg {
     Ping,
+    ChatMessage {
+        text: String,
+        workspace_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +30,20 @@ pub enum ServerMsg {
         job_id: String,
         todo_id: String,
         status: String,
+    },
+    ChatResponse {
+        text: String,
+    },
+    ChatToolCall {
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    ChatToolResult {
+        tool_name: String,
+        result: String,
+    },
+    ChatError {
+        message: String,
     },
 }
 
@@ -53,6 +71,22 @@ impl ServerMsg {
             todo_id,
             status,
         }
+    }
+
+    pub fn chat_response(text: String) -> Self {
+        Self::ChatResponse { text }
+    }
+
+    pub fn chat_tool_call(tool_name: String, args: serde_json::Value) -> Self {
+        Self::ChatToolCall { tool_name, args }
+    }
+
+    pub fn chat_tool_result(tool_name: String, result: String) -> Self {
+        Self::ChatToolResult { tool_name, result }
+    }
+
+    pub fn chat_error(message: String) -> Self {
+        Self::ChatError { message }
     }
 }
 
