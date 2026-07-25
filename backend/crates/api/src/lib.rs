@@ -8,7 +8,7 @@ pub use config::Config;
 pub use state::AppState;
 pub use ws::Hub;
 
-use axum::{routing::get, Router};
+use axum::{routing::{delete, get, post}, Router};
 use tower_http::trace::TraceLayer;
 
 pub fn app(state: AppState) -> Router {
@@ -48,6 +48,31 @@ pub fn app(state: AppState) -> Router {
             get(routes::tasks::get_todo)
                 .put(routes::tasks::update_todo)
                 .delete(routes::tasks::delete_todo),
+        )
+        // L3 execution routes
+        .route(
+            "/api/workspaces/:wid/worktrees",
+            get(routes::execution::list_worktrees).post(routes::execution::create_worktree),
+        )
+        .route(
+            "/api/worktrees/:id",
+            delete(routes::execution::delete_worktree),
+        )
+        .route(
+            "/api/workspaces/:wid/jobs",
+            get(routes::execution::list_jobs),
+        )
+        .route(
+            "/api/todos/:tid/execute",
+            post(routes::execution::execute_todo),
+        )
+        .route(
+            "/api/jobs/:id",
+            get(routes::execution::get_job),
+        )
+        .route(
+            "/api/jobs/:id/cancel",
+            post(routes::execution::cancel_job),
         )
         .route("/ws", get(routes::ws::ws_handler))
         .layer(TraceLayer::new_for_http())

@@ -18,6 +18,15 @@ pub enum ServerMsg {
     Pong {
         server_time: DateTime<Utc>,
     },
+    JobOutput {
+        job_id: String,
+        text: String,
+    },
+    JobStatus {
+        job_id: String,
+        todo_id: String,
+        status: String,
+    },
 }
 
 impl ServerMsg {
@@ -31,6 +40,18 @@ impl ServerMsg {
     pub fn pong() -> Self {
         Self::Pong {
             server_time: Utc::now(),
+        }
+    }
+
+    pub fn job_output(job_id: String, text: String) -> Self {
+        Self::JobOutput { job_id, text }
+    }
+
+    pub fn job_status(job_id: String, todo_id: String, status: String) -> Self {
+        Self::JobStatus {
+            job_id,
+            todo_id,
+            status,
         }
     }
 }
@@ -60,5 +81,21 @@ mod tests {
         let msg = ServerMsg::pong();
         let json = serde_json::to_string(&msg).expect("serialize");
         assert!(json.contains("\"type\":\"pong\""));
+    }
+
+    #[test]
+    fn serialize_job_output() {
+        let msg = ServerMsg::job_output("job-1".into(), "hello".into());
+        let json = serde_json::to_string(&msg).expect("serialize");
+        assert!(json.contains("\"type\":\"job_output\""));
+        assert!(json.contains("job-1"));
+    }
+
+    #[test]
+    fn serialize_job_status() {
+        let msg = ServerMsg::job_status("job-1".into(), "todo-1".into(), "running".into());
+        let json = serde_json::to_string(&msg).expect("serialize");
+        assert!(json.contains("\"type\":\"job_status\""));
+        assert!(json.contains("running"));
     }
 }

@@ -16,6 +16,7 @@ path = "src/main.rs"
 shared = { path = "../shared" }
 db = { path = "../db" }
 tasks = { path = "../tasks" }
+execution = { path = "../execution" }
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true
