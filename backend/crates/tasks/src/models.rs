@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Workspace {
     pub id: String,
     pub name: String,
@@ -50,7 +50,7 @@ impl TargetStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Target {
     pub id: String,
     pub workspace_id: String,
@@ -98,7 +98,7 @@ impl TodoStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Todo {
     pub id: String,
     pub target_id: String,

@@ -1,5 +1,5 @@
 CREATE TABLE workspaces (
-    id         TEXT PRIMARY KEY,
+    id         TEXT NOT NULL PRIMARY KEY,
     name       TEXT NOT NULL,
     path       TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -7,7 +7,7 @@ CREATE TABLE workspaces (
 );
 
 CREATE TABLE targets (
-    id          TEXT PRIMARY KEY,
+    id          TEXT NOT NULL PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     title       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -20,7 +20,7 @@ CREATE TABLE targets (
 );
 
 CREATE TABLE todos (
-    id          TEXT PRIMARY KEY,
+    id          TEXT NOT NULL PRIMARY KEY,
     target_id   TEXT NOT NULL,
     title       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',

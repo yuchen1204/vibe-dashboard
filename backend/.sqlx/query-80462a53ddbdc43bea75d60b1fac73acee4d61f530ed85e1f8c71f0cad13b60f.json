@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, name, path, created_at, updated_at\n           FROM workspaces\n           ORDER BY updated_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "80462a53ddbdc43bea75d60b1fac73acee4d61f530ed85e1f8c71f0cad13b60f"
+}
