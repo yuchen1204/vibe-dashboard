@@ -51,7 +51,9 @@ pub async fn execute_todo(
     let job_id = job.id.clone();
 
     // ---------- 3. 准备 worktree ----------
-    let branch = format!("todo-{}", &todo.id[..8]);
+    // 分支名带时间戳后缀，避免重跑同一个 todo 时分支名冲突
+    let timestamp = chrono::Utc::now().format("%H%M%S%3f").to_string();
+    let branch = format!("todo-{}-{}", &todo.id[..8], timestamp);
     let wt_path = ws_path
         .parent()
         .unwrap_or(ws_path)
@@ -74,7 +76,11 @@ pub async fn execute_todo(
             &wt_path.to_string_lossy(),
             Some(&target.id),
         )
-        .await;
+        .await
+        .map_err(|e| {
+            tracing::warn!(todo_id = %todo_id, error = %e, "failed to persist worktree record, execution continues");
+            // Don't propagate — agent can still work without the DB record
+        });
 
         wt_path.to_string_lossy().to_string()
     } else {
