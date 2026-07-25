@@ -1,28 +1,46 @@
-# Rust
-backend/target/
-backend/**/*.rs.bk
+# ===== Rust / 后端 =====
+/backend/target/
+**/*.rs.bk
 
-# SQLx 编译期缓存保留（不忽略 backend/.sqlx/）
+# SQLx 离线编译缓存：保留提交（用于 SQLX_OFFLINE 构建），不忽略 backend/.sqlx/
 
-# Node
+# ===== Node / 前端 =====
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+*.local
 
-# 环境与本地数据
+# 日志
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== 环境变量与本地数据 =====
 .env
-.env.local
+.env.*
+!.env.example
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
 
-# IDE
+# ===== AI / Agent 本地工作目录 =====
+.claude/
+.superpowers/
+
+# ===== IDE / 编辑器 =====
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
+
+# ===== 操作系统 =====
 .DS_Store
 Thumbs.db
-
-# OS
 ~$*

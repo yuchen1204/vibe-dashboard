@@ -36,7 +36,15 @@ pub async fn path_suggest(
                     if name.to_lowercase().starts_with(&partial.to_lowercase()) {
                         let full = format!("{}{}", base_dir, name);
                         // 追加反斜杠表示目录
-                        results.push(format!("{}{}", full, if full.ends_with('\\') || full.ends_with('/') { "" } else { "\\" }));
+                        results.push(format!(
+                            "{}{}",
+                            full,
+                            if full.ends_with('\\') || full.ends_with('/') {
+                                ""
+                            } else {
+                                "\\"
+                            }
+                        ));
                     }
                 }
             }
