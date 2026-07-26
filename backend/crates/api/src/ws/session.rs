@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use axum::extract::ws::{Message, WebSocket};
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time::{interval, Instant};
 
 use crate::state::AppState;
@@ -72,9 +75,33 @@ pub async fn handle_connection(ws: WebSocket, state: AppState) {
                             }
                             ClientMsg::ChatMessage { text, workspace_id } => {
                                 handle_chat_message(
-                                    &hub, id, &mut sessions, &llm_config, &pool,
+                                    hub.clone(), id, &mut sessions, &llm_config, &pool,
                                     &workspace_id, &text, &tool_ctx,
                                 ).await;
+                            }
+                            ClientMsg::NewSession { workspace_id } => {
+                                sessions.insert(workspace_id.clone(), orchestrator::session::Session::new(&workspace_id));
+                                let _ = hub.send_to(id, ServerMsg::chat_response("已开启新会话，之前的对话历史已清除。".to_string()));
+                            }
+                            ClientMsg::GetHistory { workspace_id } => {
+                                if let Some(session) = sessions.get(&workspace_id) {
+                                    let history = session.messages.iter().filter_map(|m| {
+                                        let role = match m.role {
+                                            orchestrator::Role::System => return None,
+                                            orchestrator::Role::User => "user",
+                                            orchestrator::Role::Assistant => "assistant",
+                                            orchestrator::Role::Tool => return None,
+                                        };
+                                        Some(super::message::SessionMessage {
+                                            role: role.to_string(),
+                                            content: m.content.clone(),
+                                            tool_name: m.name.clone(),
+                                        })
+                                    }).collect();
+                                    let _ = hub.send_to(id, ServerMsg::session_history(history));
+                                } else {
+                                    let _ = hub.send_to(id, ServerMsg::session_history(vec![]));
+                                }
                             }
                         }
                     }
@@ -123,7 +150,7 @@ impl execution::dispatch::JobNotifier for HubNotifier {
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_chat_message(
-    hub: &super::hub::Hub,
+    hub: Arc<super::hub::Hub>,
     conn_id: ConnId,
     sessions: &mut DashMap<String, orchestrator::session::Session>,
     llm_config: &Arc<RwLock<orchestrator::llm::LlmConfig>>,
@@ -146,25 +173,20 @@ async fn handle_chat_message(
         cfg.is_configured()
     };
 
-    // Run the agent
+    // 创建事件 channel，用于接收 agent 循环的中间事件
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<orchestrator::agent::AgentEvent>();
+
+    // 启动一个后台任务：从 event_rx 读取事件并实时推送到前端
+    let event_forwarder = spawn_event_forwarder(hub.clone(), conn_id, event_rx);
+
+    // Run the agent loop
     if is_configured {
         let config_snapshot = {
             let cfg = llm_config.read().unwrap();
             cfg.clone()
         };
-        match orchestrator::agent::run_agent(&mut session, pool, &config_snapshot, tool_ctx).await {
+        match orchestrator::agent::run_agent(&mut session, pool, &config_snapshot, tool_ctx, Some(event_tx)).await {
             Ok(response) => {
-                // Send tool calls
-                for tc in &response.tool_calls {
-                    hub.send_to(conn_id, ServerMsg::chat_tool_call(
-                        tc.name.clone(),
-                        tc.arguments.clone(),
-                    ));
-                    hub.send_to(conn_id, ServerMsg::chat_tool_result(
-                        tc.name.clone(),
-                        tc.result.clone(),
-                    ));
-                }
                 // Send final response
                 hub.send_to(conn_id, ServerMsg::chat_response(response.response));
             }
@@ -186,4 +208,29 @@ async fn handle_chat_message(
         }
         hub.send_to(conn_id, ServerMsg::chat_response(resp.response));
     }
+
+    // 停止事件转发任务
+    event_forwarder.abort();
+}
+
+fn spawn_event_forwarder(
+    hub: Arc<super::hub::Hub>,
+    conn_id: ConnId,
+    mut event_rx: mpsc::UnboundedReceiver<orchestrator::agent::AgentEvent>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                orchestrator::agent::AgentEvent::Thinking { text, iteration } => {
+                    hub.send_to(conn_id, ServerMsg::chat_thinking(text, iteration));
+                }
+                orchestrator::agent::AgentEvent::ToolCall { name, arguments, iteration: _ } => {
+                    hub.send_to(conn_id, ServerMsg::chat_tool_call(name, arguments));
+                }
+                orchestrator::agent::AgentEvent::ToolResult { name, result, iteration: _ } => {
+                    hub.send_to(conn_id, ServerMsg::chat_tool_result(name, result));
+                }
+            }
+        }
+    })
 }

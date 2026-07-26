@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
 import { useUiStore } from "@/stores/ui";
+import { Settings } from "lucide-react";
 
 function StatusDot({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -47,6 +48,17 @@ export function Sidebar({ healthOk }: { healthOk: boolean }) {
         ))}
       </nav>
       <div className="space-y-2 border-t pt-3">
+        <NavLink
+          to="/settings"
+          className={({ isActive }) =>
+            `flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent ${
+              isActive ? "bg-accent font-medium" : "text-muted-foreground"
+            }`
+          }
+        >
+          <Settings className="h-4 w-4" />
+          设置
+        </NavLink>
         <StatusDot ok={healthOk} label="后端" />
         <StatusDot ok={wsStatus === "open"} label="WebSocket" />
       </div>

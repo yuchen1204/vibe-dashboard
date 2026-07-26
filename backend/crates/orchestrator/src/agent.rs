@@ -1,4 +1,5 @@
 use sqlx::SqlitePool;
+use tokio::sync::mpsc;
 
 use crate::llm::{self, ChatCompletionRequest, LlmConfig};
 use crate::session::{ChatMessage, Role, Session};
@@ -18,17 +19,35 @@ pub struct ToolCallInfo {
     pub result: String,
 }
 
-/// 运行编排 Agent 一圈（用户输入 → LLM → 工具调用 → LLM → 回复）
+/// 流式事件 — 通过 channel 发送，让 session handler 实时推送到前端
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// LLM 本轮思考结果（中间回复）
+    Thinking { text: String, iteration: usize },
+    /// 工具调用
+    ToolCall { name: String, arguments: serde_json::Value, iteration: usize },
+    /// 工具执行结果
+    ToolResult { name: String, result: String, iteration: usize },
+}
+
+const MAX_ITERATIONS: usize = 100;
+
+/// 运行编排 Agent 循环（用户输入 → LLM → 工具 → LLM → 工具 → ... → 回复）
+///
+/// 相比旧版单轮工具调用，现在支持多轮迭代：
+/// - 每次 LLM 返回工具调用，就执行工具、把结果写回消息历史、继续下一轮
+/// - 直到 LLM 不再调用工具，或达到最大迭代次数
+/// - 每轮中间结果通过 `event_tx` 实时推送，前端可逐轮展示
 pub async fn run_agent(
     session: &mut Session,
     pool: &SqlitePool,
     config: &LlmConfig,
     tool_ctx: &ToolContext,
+    event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
 ) -> Result<AgentResponse, String> {
     if !config.is_configured() {
-        // 无 LLM 配置时返回模拟回复
         return Ok(AgentResponse {
-            response: "LLM 未配置。请设置 VIBE_LLM_API_KEY 环境变量来启用 AI 编排助手。".to_string(),
+            response: "LLM 未配置。请先设置 API Key 来启用 AI 编排助手。".to_string(),
             tool_calls: vec![],
         });
     }
@@ -84,99 +103,101 @@ pub async fn run_agent(
         session.messages.insert(0, ChatMessage::system(system_prompt));
     }
 
-    let api_messages = llm::to_api_messages(&session.messages_for_llm());
+    let mut all_tool_calls = Vec::new();
 
-    let request = ChatCompletionRequest {
-        model: config.model.clone(),
-        messages: api_messages,
-        tools: Some(tools.clone()),
-        tool_choice: Some(serde_json::json!("auto")),
-        max_tokens: config.max_tokens,
-        temperature: config.temperature,
-    };
+    for iteration in 1..=MAX_ITERATIONS {
+        // ---------- 调用 LLM ----------
+        let api_messages = llm::to_api_messages(&session.messages_for_llm());
+        let request = ChatCompletionRequest {
+            model: config.model.clone(),
+            messages: api_messages,
+            tools: Some(tools.clone()),
+            tool_choice: Some(serde_json::json!("auto")),
+            max_tokens: config.max_tokens,
+            temperature: config.temperature,
+        };
 
-    let response = llm::chat_completion(config, request)
-        .await
-        .map_err(|e| format!("LLM error: {e}"))?;
+        let response = llm::chat_completion(config, request)
+            .await
+            .map_err(|e| format!("LLM 错误: {e}"))?;
 
-    let choice = response
-        .choices
-        .into_iter()
-        .next()
-        .ok_or("no response from LLM")?;
+        let choice = response
+            .choices
+            .into_iter()
+            .next()
+            .ok_or("LLM 未返回有效回复")?;
 
-    let content = choice.message.content.clone();
-    let tool_calls = choice.message.tool_calls.clone();
+        let content = choice.message.content.clone().unwrap_or_default();
+        let tool_calls = choice.message.tool_calls.clone();
 
-    // 记录 assistant 消息
-    let mut assistant_msg = ChatMessage::assistant(content.clone());
-    if let Some(ref calls) = tool_calls {
-        assistant_msg = assistant_msg.with_tool_calls(calls.clone());
-    }
-    session.add(assistant_msg);
+        // 发送 thinking 事件（LLM 本轮思考结果）
+        send_event(&event_tx, AgentEvent::Thinking {
+            text: content.clone(),
+            iteration,
+        });
 
-    // 处理工具调用
-    let mut tool_infos = Vec::new();
+        // 记录 assistant 消息
+        let mut assistant_msg = ChatMessage::assistant(&content);
+        if let Some(ref calls) = tool_calls {
+            assistant_msg = assistant_msg.with_tool_calls(calls.clone());
+        }
+        session.add(assistant_msg);
 
-    if let Some(calls) = tool_calls {
-        for call in calls {
-            // 解析参数
+        // 没有工具调用 → 本轮就是最终回复
+        let has_tool_calls = tool_calls.as_ref().is_some_and(|c| !c.is_empty());
+        if !has_tool_calls {
+            return Ok(AgentResponse {
+                response: content,
+                tool_calls: all_tool_calls,
+            });
+        }
+
+        // ---------- 执行工具调用 ----------
+        for call in tool_calls.unwrap() {
             let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
                 .unwrap_or(serde_json::json!({"error": "invalid arguments"}));
 
-            // 执行工具
+            send_event(&event_tx, AgentEvent::ToolCall {
+                name: call.function.name.clone(),
+                arguments: args.clone(),
+                iteration,
+            });
+
             let result = tools::execute_tool(pool, &session.workspace_id, &call.function.name, &args, tool_ctx)
                 .await
                 .unwrap_or_else(|e| format!("Error: {e}"));
 
-            tool_infos.push(ToolCallInfo {
+            send_event(&event_tx, AgentEvent::ToolResult {
+                name: call.function.name.clone(),
+                result: result.clone(),
+                iteration,
+            });
+
+            all_tool_calls.push(ToolCallInfo {
                 name: call.function.name.clone(),
                 arguments: args,
                 result: result.clone(),
             });
 
-            // 记录 tool 结果到消息历史
-            session.add(ChatMessage::tool(
-                &result,
-                &call.id,
-                &call.function.name,
-            ));
+            session.add(ChatMessage::tool(&result, &call.id, &call.function.name));
         }
 
-        // 有工具调用 → 再调一次 LLM 生成最终回复
-        let api_messages = llm::to_api_messages(&session.messages_for_llm());
-        let follow_up_request = ChatCompletionRequest {
-            model: config.model.clone(),
-            messages: api_messages,
-            tools: None,
-            tool_choice: None,
-            max_tokens: config.max_tokens,
-            temperature: config.temperature,
-        };
-
-        let follow_up = llm::chat_completion(config, follow_up_request)
-            .await
-            .map_err(|e| format!("LLM follow-up error: {e}"))?;
-
-        let final_content = follow_up
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .unwrap_or_default();
-
-        session.add(ChatMessage::assistant(&final_content));
-
-        return Ok(AgentResponse {
-            response: final_content,
-            tool_calls: tool_infos,
-        });
+        // 继续下一轮 — LLM 会看到工具结果并决定下一步
     }
 
+    // 达到最大迭代次数
+    let msg = "我已进行了多轮分析，但可能还需要更多步骤。请告诉我是否需要继续，或者你可以补充更多信息。".to_string();
+    session.add(ChatMessage::assistant(&msg));
     Ok(AgentResponse {
-        response: content,
-        tool_calls: tool_infos,
+        response: msg,
+        tool_calls: all_tool_calls,
     })
+}
+
+fn send_event(tx: &Option<mpsc::UnboundedSender<AgentEvent>>, event: AgentEvent) {
+    if let Some(ref tx) = tx {
+        let _ = tx.send(event);
+    }
 }
 
 /// 非 LLM 模式下的简单回复（用于 mock 测试）

@@ -4,11 +4,18 @@ import { getJson } from "@/lib/api";
 import { wsClient } from "@/lib/ws";
 import { useUiStore } from "@/stores/ui";
 import { useExecutionStore } from "@/stores/execution";
+import { useReviewStore } from "@/stores/review";
 import type { HealthResponse, ServerMsg } from "@/types/api";
 
 export function useGlobalStatus() {
   const { setWsStatus, setConnectionId, setPingPongLatency } = useUiStore();
   const setJobStatus = useExecutionStore((s) => s.setJobStatus);
+  const {
+    setReviewStarted,
+    addFinding,
+    setReviewCompleted,
+    setReviewError,
+  } = useReviewStore();
   const pingSentAtRef = useRef<number | null>(null);
 
   const healthQuery = useQuery({
@@ -40,6 +47,18 @@ export function useGlobalStatus() {
         }
       } else if (msg.type === "job_status") {
         setJobStatus(msg.payload.job_id, msg.payload.todo_id, msg.payload.status);
+      } else if (msg.type === "review_started") {
+        setReviewStarted(msg.payload.review_id, msg.payload.job_id, msg.payload.todo_id);
+      } else if (msg.type === "review_finding") {
+        addFinding(msg.payload.review_id, msg.payload.finding);
+      } else if (msg.type === "review_completed") {
+        setReviewCompleted(
+          msg.payload.review_id,
+          msg.payload.summary,
+          msg.payload.score,
+        );
+      } else if (msg.type === "review_error") {
+        setReviewError(msg.payload.review_id, msg.payload.message);
       }
     });
 

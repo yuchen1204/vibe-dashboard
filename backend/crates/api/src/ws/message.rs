@@ -2,12 +2,31 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// 用于 WS 推送的 review finding 载荷（不含内部 id/review_id）
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewFindingPayload {
+    pub id: String,
+    pub severity: String,
+    pub file_path: String,
+    pub line_number: Option<i64>,
+    pub category: String,
+    pub title: String,
+    pub description: String,
+    pub suggestion: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum ClientMsg {
     Ping,
     ChatMessage {
         text: String,
+        workspace_id: String,
+    },
+    NewSession {
+        workspace_id: String,
+    },
+    GetHistory {
         workspace_id: String,
     },
 }
@@ -34,6 +53,10 @@ pub enum ServerMsg {
     ChatResponse {
         text: String,
     },
+    ChatThinking {
+        text: String,
+        iteration: usize,
+    },
     ChatToolCall {
         tool_name: String,
         args: serde_json::Value,
@@ -45,6 +68,36 @@ pub enum ServerMsg {
     ChatError {
         message: String,
     },
+    SessionHistory {
+        messages: Vec<SessionMessage>,
+    },
+    // L5 review events
+    ReviewStarted {
+        review_id: String,
+        job_id: String,
+        todo_id: String,
+    },
+    ReviewFinding {
+        review_id: String,
+        finding: ReviewFindingPayload,
+    },
+    ReviewCompleted {
+        review_id: String,
+        summary: String,
+        score: i64,
+        finding_count: i64,
+    },
+    ReviewError {
+        review_id: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMessage {
+    pub role: String,
+    pub content: String,
+    pub tool_name: Option<String>,
 }
 
 impl ServerMsg {
@@ -77,6 +130,10 @@ impl ServerMsg {
         Self::ChatResponse { text }
     }
 
+    pub fn chat_thinking(text: String, iteration: usize) -> Self {
+        Self::ChatThinking { text, iteration }
+    }
+
     pub fn chat_tool_call(tool_name: String, args: serde_json::Value) -> Self {
         Self::ChatToolCall { tool_name, args }
     }
@@ -87,6 +144,26 @@ impl ServerMsg {
 
     pub fn chat_error(message: String) -> Self {
         Self::ChatError { message }
+    }
+
+    pub fn session_history(messages: Vec<SessionMessage>) -> Self {
+        Self::SessionHistory { messages }
+    }
+
+    pub fn review_started(review_id: String, job_id: String, todo_id: String) -> Self {
+        Self::ReviewStarted { review_id, job_id, todo_id }
+    }
+
+    pub fn review_finding(review_id: String, finding: ReviewFindingPayload) -> Self {
+        Self::ReviewFinding { review_id, finding }
+    }
+
+    pub fn review_completed(review_id: String, summary: String, score: i64, finding_count: i64) -> Self {
+        Self::ReviewCompleted { review_id, summary, score, finding_count }
+    }
+
+    pub fn review_error(review_id: String, message: String) -> Self {
+        Self::ReviewError { review_id, message }
     }
 }
 

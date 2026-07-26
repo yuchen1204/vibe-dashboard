@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { useGlobalStatus } from "@/hooks/useGlobalStatus";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { WorkspaceViewPage } from "@/pages/WorkspaceViewPage";
+import { SettingsPage } from "@/pages/SettingsPage";
 import { LlmConfigDialog } from "@/components/settings/LlmConfigDialog";
 import { getLlmConfig } from "@/lib/api";
 
@@ -32,6 +33,7 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<WorkspacesPage />} />
           <Route path="/workspaces/:wid" element={<WorkspaceViewPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

@@ -8,7 +8,7 @@ pub use config::Config;
 pub use state::AppState;
 pub use ws::Hub;
 
-use axum::{routing::{delete, get, post}, Router};
+use axum::{routing::{delete, get, post, put}, Router};
 use tower_http::trace::TraceLayer;
 
 pub fn app(state: AppState) -> Router {
@@ -81,6 +81,60 @@ pub fn app(state: AppState) -> Router {
             get(routes::settings::get_llm_config)
                 .put(routes::settings::set_llm_config)
                 .delete(routes::settings::clear_llm_config),
+        )
+        // L5 review routes
+        .route(
+            "/api/reviews/todo/:todo_id",
+            get(routes::review::list_reviews_by_todo),
+        )
+        .route(
+            "/api/reviews/job/:job_id",
+            get(routes::review::list_reviews_by_job),
+        )
+        .route(
+            "/api/reviews/:id",
+            get(routes::review::get_review),
+        )
+        .route(
+            "/api/reviews",
+            post(routes::review::create_review),
+        )
+        .route(
+            "/api/reviews/trigger",
+            post(routes::review::trigger_review),
+        )
+        .route(
+            "/api/reviews/:id/findings",
+            post(routes::review::add_finding),
+        )
+        .route(
+            "/api/reviews/:id/summary",
+            put(routes::review::update_review_summary),
+        )
+        // L6 feedback loop routes
+        .route(
+            "/api/reviews/:rid/feedback",
+            get(routes::feedback::list_feedback),
+        )
+        .route(
+            "/api/feedback/:finding_id/accept",
+            post(routes::feedback::accept_finding),
+        )
+        .route(
+            "/api/feedback/:finding_id/ignore",
+            post(routes::feedback::ignore_finding),
+        )
+        .route(
+            "/api/todos/:tid/iterations",
+            get(routes::feedback::list_iterations),
+        )
+        .route(
+            "/api/todos/:tid/auto-fix",
+            post(routes::feedback::trigger_auto_fix),
+        )
+        .route(
+            "/api/todos/:tid/auto-fix-sync",
+            post(routes::feedback::trigger_auto_fix_sync),
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state)

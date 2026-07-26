@@ -1,3 +1,5 @@
+import type { Review, ReviewDetail, CreateReviewInput, CreateFindingInput, ReviewFinding } from "@/types/api";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -80,4 +82,40 @@ export function getLlmConfig(): Promise<LlmConfigResponse> {
 
 export function saveLlmConfig(input: LlmConfigInput): Promise<void> {
   return putJson("/api/settings/llm", input);
+}
+
+export function clearLlmConfig(): Promise<void> {
+  return del("/api/settings/llm");
+}
+
+// ---------- Review API ----------
+
+export function listReviewsByTodo(todoId: string): Promise<Review[]> {
+  return getJson<Review[]>(`/api/reviews/todo/${todoId}`);
+}
+
+export function listReviewsByJob(jobId: string): Promise<Review[]> {
+  return getJson<Review[]>(`/api/reviews/job/${jobId}`);
+}
+
+export function getReviewDetail(id: string): Promise<ReviewDetail> {
+  return getJson<ReviewDetail>(`/api/reviews/${id}`);
+}
+
+export function createReview(input: CreateReviewInput): Promise<Review> {
+  return postJson<Review>("/api/reviews", input);
+}
+
+export function addFinding(
+  reviewId: string,
+  input: CreateFindingInput,
+): Promise<ReviewFinding> {
+  return postJson<ReviewFinding>(`/api/reviews/${reviewId}/findings`, input);
+}
+
+export function updateReviewSummary(
+  reviewId: string,
+  input: { summary?: string; score?: number; total_findings?: number },
+): Promise<Review> {
+  return putJson<Review>(`/api/reviews/${reviewId}/summary`, input);
 }

@@ -1,4 +1,27 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// 计算重试延迟：1s, 3s, 5s, 7s, 10s, 13s, 16s, 19s, 22s, 25s
+fn retry_delay(attempt: usize) -> Duration {
+    let secs: u64 = if attempt < 4 {
+        (2 * attempt + 1) as u64
+    } else {
+        7 + (attempt as u64 - 3) * 3
+    };
+    Duration::from_secs(secs)
+}
+
+const MAX_RETRIES: usize = 10;
+
+/// 判断错误是否可重试（仅网络错误和 5xx 服务端错误）
+fn is_retryable(err: &LlmError) -> bool {
+    match err {
+        LlmError::HttpError(_) => true,
+        LlmError::ApiError(code, _) => *code >= 500,
+        LlmError::DeserializeError(_) => false,
+        LlmError::NotConfigured => false,
+    }
+}
 
 /// LLM 配置
 #[derive(Debug, Clone)]
@@ -56,7 +79,8 @@ pub struct ChatCompletionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionMessage {
     pub role: String,
-    pub content: String,
+    #[serde(default)]
+    pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,7 +140,7 @@ pub struct Usage {
     pub total_tokens: u32,
 }
 
-/// 发送 chat/completions 请求
+/// 发送 chat/completions 请求（带自动重试）
 pub async fn chat_completion(
     config: &LlmConfig,
     request: ChatCompletionRequest,
@@ -124,24 +148,58 @@ pub async fn chat_completion(
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", config.api_base.trim_end_matches('/'));
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| LlmError::HttpError(e.to_string()))?;
+    let mut last_err = LlmError::HttpError("max retries exceeded".to_string());
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(LlmError::ApiError(status.as_u16(), body));
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            let delay = retry_delay(attempt);
+            tracing::warn!(
+                attempt, delay_ms = delay.as_millis(),
+                "LLM API call failed, retrying"
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = LlmError::HttpError(e.to_string());
+                if !is_retryable(&last_err) {
+                    return Err(last_err);
+                }
+                continue;
+            }
+        };
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            last_err = LlmError::ApiError(status, body);
+            if !is_retryable(&last_err) {
+                return Err(last_err);
+            }
+            continue;
+        }
+
+        match resp.json().await {
+            Ok(data) => return Ok(data),
+            Err(e) => {
+                last_err = LlmError::DeserializeError(e.to_string());
+                // 反序列化错误不可重试
+                return Err(last_err);
+            }
+        }
     }
 
-    resp.json()
-        .await
-        .map_err(|e| LlmError::DeserializeError(e.to_string()))
+    Err(last_err)
 }
 
 /// 把内部 ChatMessage 转为 API 格式
@@ -159,7 +217,7 @@ pub fn to_api_messages(messages: &[crate::ChatMessage]) -> Vec<ChatCompletionMes
 
             ChatCompletionMessage {
                 role,
-                content: m.content.clone(),
+                content: Some(m.content.clone()),
                 tool_calls: m.tool_calls.clone(),
                 tool_call_id: m.tool_call_id.clone(),
                 name: m.name.clone(),
@@ -213,6 +271,7 @@ mod tests {
         assert_eq!(api[1].role, "user");
         assert_eq!(api[2].role, "assistant");
         assert_eq!(api[3].role, "tool");
+        assert_eq!(api[0].content.as_deref(), Some("system prompt"));
         assert_eq!(api[3].tool_call_id.as_deref(), Some("call-1"));
     }
 

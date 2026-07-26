@@ -11,7 +11,10 @@ import { useUpdateTodo, useDeleteTodo } from "@/hooks/useTodos";
 import type { Target, Todo, TodoStatus } from "@/types/api";
 import { TodoDialog } from "./TodoDialog";
 import { ExecuteButton } from "@/components/execution/ExecuteButton";
+import { ReviewDialog } from "@/components/review/ReviewDialog";
+import { useReviewsByTodo, useTriggerReview } from "@/hooks/useReview";
 import { useExecutionStore } from "@/stores/execution";
+import { useState } from "react";
 
 const TODO_STATUSES: TodoStatus[] = ["todo", "doing", "done", "blocked"];
 const STATUS_LABEL: Record<TodoStatus, string> = {
@@ -33,6 +36,27 @@ export function TodoCard({ workspaceId, todo, targets }: Props) {
   const target = targets.find((t) => t.id === todo.target_id);
   const jobRecord = useExecutionStore((s) => s.jobByTodo[todo.id]);
   const runningJobId = jobRecord?.jobId ?? null;
+  const { data: reviews } = useReviewsByTodo(todo.id);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewRunning, setReviewRunning] = useState(false);
+  const triggerReview = useTriggerReview();
+  const hasReview = reviews && reviews.length > 0;
+  const latestJobId = jobRecord?.jobId;
+
+  const handleTriggerReview = () => {
+    if (!latestJobId) return;
+    setReviewRunning(true);
+    triggerReview.mutate(
+      { job_id: latestJobId, todo_id: todo.id },
+      {
+        onSettled: () => {
+          // Don't immediately set false — the review will complete via WS
+          // Timeout fallback in case WS doesn't deliver
+          setTimeout(() => setReviewRunning(false), 30000);
+        },
+      },
+    );
+  };
 
   return (
     <div className="rounded-md border bg-background p-3 space-y-2">
@@ -75,6 +99,32 @@ export function TodoCard({ workspaceId, todo, targets }: Props) {
           todo={todo}
           runningJobId={runningJobId}
         />
+        {latestJobId && !reviewRunning && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={handleTriggerReview}
+            disabled={triggerReview.isPending}
+            title="触发 AI 代码审查"
+          >
+            🔍
+          </Button>
+        )}
+        {reviewRunning && (
+          <span className="text-xs text-muted-foreground animate-pulse">审查中...</span>
+        )}
+        {hasReview && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => setReviewOpen(true)}
+            title="查看审查"
+          >
+            📋
+          </Button>
+        )}
         <TodoDialog
           workspaceId={workspaceId}
           targets={targets}
@@ -94,6 +144,11 @@ export function TodoCard({ workspaceId, todo, targets }: Props) {
           删除
         </Button>
       </div>
+      <ReviewDialog
+        todoId={todo.id}
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+      />
     </div>
   );
 }

@@ -153,13 +153,17 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: ToolFunction {
                 name: "read_file".to_string(),
-                description: "Read the contents of a file in the workspace".to_string(),
+                description: "Read the contents of a file in the workspace. Can specify start_line to read from a specific line (1-indexed).".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
                             "description": "Relative path to the file from the workspace root (e.g. src/main.rs, Cargo.toml)"
+                        },
+                        "start_line": {
+                            "type": "integer",
+                            "description": "Optional: line number to start reading from (1-indexed, default: 1)"
                         },
                         "max_lines": {
                             "type": "integer",
@@ -363,6 +367,11 @@ async fn cmd_read_file(
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("missing path")?;
+    let start_line = args
+        .get("start_line")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(1);
     let max_lines = args
         .get("max_lines")
         .and_then(|v| v.as_u64())
@@ -394,13 +403,22 @@ async fn cmd_read_file(
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
 
-    if total <= max_lines {
+    // start_line 是 1-indexed，转为 0-indexed
+    let start = if start_line > 0 { start_line - 1 } else { 0 };
+    let start = start.min(total);
+
+    let end = start + max_lines;
+    let end = end.min(total);
+
+    let snippet = lines[start..end].join("\n");
+    let actual_start = start + 1; // 显示给用户时转回 1-indexed
+
+    if start == 0 && end == total {
         Ok(format!("```\n{}\n```\n\n*{} lines total*", content, total))
     } else {
-        let snippet = lines[..max_lines].join("\n");
         Ok(format!(
-            "```\n{}\n...\n```\n\n*{} lines total (showing first {})*",
-            snippet, total, max_lines
+            "```\n{}\n```\n\n*Showing lines {}-{} of {}*",
+            snippet, actual_start, end, total
         ))
     }
 }
@@ -463,11 +481,9 @@ async fn cmd_grep_files(
         }
 
         // 检查 glob 匹配
-        if let Some(ref matcher) = glob_matcher {
-            if let Some(ref m) = matcher {
-                if !m.matches(entry.path().to_string_lossy().as_ref()) {
-                    continue;
-                }
+        if let Some(Some(ref m)) = glob_matcher.as_ref() {
+            if !m.matches(entry.path().to_string_lossy().as_ref()) {
+                continue;
             }
         }
 
