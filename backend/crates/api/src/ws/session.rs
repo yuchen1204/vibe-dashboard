@@ -1,7 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time::{interval, Instant};
 
@@ -51,7 +51,7 @@ pub async fn handle_connection(ws: WebSocket, state: AppState) {
     let recv_task = tokio::spawn(async move {
         let mut last_pong = Instant::now();
         let mut sessions: DashMap<String, orchestrator::session::Session> = DashMap::new();
-        let llm_config = state.llm_config.clone();
+        let llm_config = state.llm_config;
         let pool = state.db.clone();
         let hub = state.hub.clone();
         let executor = state.executor.clone();
@@ -126,7 +126,7 @@ async fn handle_chat_message(
     hub: &super::hub::Hub,
     conn_id: ConnId,
     sessions: &mut DashMap<String, orchestrator::session::Session>,
-    llm_config: &orchestrator::llm::LlmConfig,
+    llm_config: &Arc<RwLock<orchestrator::llm::LlmConfig>>,
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
     text: &str,
@@ -140,9 +140,19 @@ async fn handle_chat_message(
     // Add user message
     session.add(orchestrator::ChatMessage::user(text));
 
+    // 每次处理消息时从全局共享状态读取最新配置
+    let is_configured = {
+        let cfg = llm_config.read().unwrap();
+        cfg.is_configured()
+    };
+
     // Run the agent
-    if llm_config.is_configured() {
-        match orchestrator::agent::run_agent(&mut session, pool, llm_config, tool_ctx).await {
+    if is_configured {
+        let config_snapshot = {
+            let cfg = llm_config.read().unwrap();
+            cfg.clone()
+        };
+        match orchestrator::agent::run_agent(&mut session, pool, &config_snapshot, tool_ctx).await {
             Ok(response) => {
                 // Send tool calls
                 for tc in &response.tool_calls {

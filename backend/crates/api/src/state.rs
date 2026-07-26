@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
 use execution::executor::ExecutorManager;
@@ -15,7 +15,7 @@ pub struct AppState {
     #[allow(dead_code)]
     pub config: Arc<Config>,
     pub executor: Arc<ExecutorManager>,
-    pub llm_config: LlmConfig,
+    pub llm_config: Arc<RwLock<LlmConfig>>,
     pub started_at: DateTime<Utc>,
 }
 
@@ -53,7 +53,7 @@ impl AppState {
         }
 
         // 从 DB 加载 LLM 配置，环境变量优先级更高（覆盖 DB）
-        let llm_config = load_llm_config(&db).await;
+        let llm_config = Arc::new(RwLock::new(load_llm_config(&db).await));
 
         Self {
             db,
