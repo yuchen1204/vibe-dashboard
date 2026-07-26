@@ -6,7 +6,7 @@ use super::{ExecContext, Executor, JsonLinesParser, OutputParser};
 
 /// OpenCode executor
 ///
-/// 命令构造: `opencode --task "{prompt}" [--model {model}] [--timeout {secs}]`
+/// 命令构造: `opencode run [--model {model}]`  + prompt 通过 stdin 传入
 /// 输出解析: JSON Lines（尝试解析结构化事件，回退到纯文本）
 /// 默认超时: 无（用户不主动 cancel 就一直跑）
 pub struct OpenCodeExecutor {
@@ -46,7 +46,7 @@ impl Executor for OpenCodeExecutor {
     }
 
     fn build_command(&self, ctx: &ExecContext) -> Command {
-        let mut args = vec!["--task", &ctx.prompt];
+        let mut args = vec!["--task"]; // 不带 prompt 文本，由 spawn 从 stdin 写入
         if let Some(model) = &self.model {
             args.push("--model");
             args.push(model);
@@ -84,6 +84,7 @@ mod tests {
         }
         let args: Vec<_> = cmd.as_std().get_args().map(|a| a.to_str().unwrap().to_string()).collect();
         assert!(args.contains(&"--task".to_string()));
+        assert!(!args.contains(&"do it".to_string()), "prompt should NOT be in args, it goes via stdin: {args:?}");
     }
 
     #[test]

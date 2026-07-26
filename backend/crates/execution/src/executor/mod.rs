@@ -135,7 +135,7 @@ pub trait Executor: Send + Sync {
     ) -> AppResult<(ExecutorHandle, mpsc::UnboundedReceiver<ExecutorEvent>)> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut cmd = self.build_command(&ctx);
-        cmd.stdin(Stdio::null())
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -147,6 +147,19 @@ pub trait Executor: Send + Sync {
         let mut child = cmd
             .spawn()
             .map_err(|e| AppError::Internal(format!("failed to spawn {}: {e}", self.name())))?;
+
+        // 通过 stdin 将 prompt 写入子进程，避免命令行参数截断/转义问题
+        // Windows cmd.exe 会重新解析命令行参数，prompt 中的换行、引号、特殊字符
+        // 在通过 -p 参数传递时会被截断或误解析。改用 stdin 管道写入则完全绕过
+        // cmd.exe 的 tokenizer，同时也规避了 Windows 命令行 32KB 长度上限。
+        if let Some(mut stdin) = child.stdin.take() {
+            let prompt = ctx.prompt.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(prompt.as_bytes()).await;
+                // stdin 在这里 drop，自动关闭管道 = 发送 EOF
+            });
+        }
 
         let parser = self.parser();
 
