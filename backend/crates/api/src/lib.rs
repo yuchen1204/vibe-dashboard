@@ -75,6 +75,13 @@ pub fn app(state: AppState) -> Router {
             post(routes::execution::cancel_job),
         )
         .route("/ws", get(routes::ws::ws_handler))
+        // L4 settings routes
+        .route(
+            "/api/settings/llm",
+            get(routes::settings::get_llm_config)
+                .put(routes::settings::set_llm_config)
+                .delete(routes::settings::clear_llm_config),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

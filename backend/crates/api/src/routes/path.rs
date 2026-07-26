@@ -33,6 +33,10 @@ pub async fn path_suggest(
             for entry in entries.flatten() {
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     let name = entry.file_name().to_string_lossy().to_string();
+                    // 忽略以 . 开头的隐藏文件/目录
+                    if name.starts_with('.') {
+                        continue;
+                    }
                     if name.to_lowercase().starts_with(&partial.to_lowercase()) {
                         let full = format!("{}{}", base_dir, name);
                         // 追加反斜杠表示目录

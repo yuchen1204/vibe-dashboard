@@ -42,7 +42,7 @@ pub async fn execute_todo(
 
     let ws_path = std::path::Path::new(&ws.workspace.path);
     let prompt = format!(
-        "Execute the following task:\n\nTitle: {}\nDescription: {}\n\nPlease implement this change.",
+        "Task: {}. Description: {}. Implement this change in the codebase. Create or modify files as needed. Do not ask for clarification.",
         todo.title, todo.description
     );
 

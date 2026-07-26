@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     db::run_migrations(&pool).await?;
 
     let hub = Hub::new();
-    let state = AppState::new(pool, hub, config.clone());
+    let state = AppState::new(pool, hub, config.clone()).await;
 
     let app = api::app(state.clone());
 

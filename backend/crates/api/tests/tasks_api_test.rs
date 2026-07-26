@@ -15,7 +15,7 @@ async fn setup() -> axum::Router {
         http_port: 0,
         log_level: "info".to_string(),
     };
-    let state = api::AppState::new(pool, hub, config);
+    let state = api::AppState::new(pool, hub, config).await;
     api::app(state)
 }
 

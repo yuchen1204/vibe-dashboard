@@ -20,7 +20,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: SqlitePool, hub: Arc<Hub>, config: Config) -> Self {
+    pub async fn new(db: SqlitePool, hub: Arc<Hub>, config: Config) -> Self {
         let mut manager = ExecutorManager::new();
 
         // 自动发现 PATH 中的 coding agent
@@ -52,13 +52,42 @@ impl AppState {
             );
         }
 
+        // 从 DB 加载 LLM 配置，环境变量优先级更高（覆盖 DB）
+        let llm_config = load_llm_config(&db).await;
+
         Self {
             db,
             hub,
             config: Arc::new(config),
             executor: Arc::new(manager),
-            llm_config: LlmConfig::from_env(),
+            llm_config,
             started_at: Utc::now(),
         }
     }
+}
+
+async fn load_llm_config(db: &SqlitePool) -> LlmConfig {
+    let mut cfg = LlmConfig::from_env();
+
+    // 如果环境变量没有设置，尝试从 DB 加载
+    if cfg.api_key.is_empty() {
+        match tasks::settings::get_llm_config(db).await {
+            Ok((api_base, api_key, model)) => {
+                if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+                    cfg.api_key = key;
+                }
+                if let Some(base) = api_base {
+                    cfg.api_base = base;
+                }
+                if let Some(model) = model {
+                    cfg.model = model;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to load LLM config from DB");
+            }
+        }
+    }
+
+    cfg
 }

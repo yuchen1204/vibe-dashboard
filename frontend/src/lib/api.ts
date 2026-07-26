@@ -59,3 +59,25 @@ export async function getPathSuggestions(q: string): Promise<string[]> {
   );
   return data.paths;
 }
+
+// ---------- LLM 配置 ----------
+
+export interface LlmConfigResponse {
+  api_base: string;
+  model: string;
+  configured: boolean;
+}
+
+export interface LlmConfigInput {
+  api_base?: string;
+  api_key?: string;
+  model?: string;
+}
+
+export function getLlmConfig(): Promise<LlmConfigResponse> {
+  return getJson<LlmConfigResponse>("/api/settings/llm");
+}
+
+export function saveLlmConfig(input: LlmConfigInput): Promise<void> {
+  return putJson("/api/settings/llm", input);
+}

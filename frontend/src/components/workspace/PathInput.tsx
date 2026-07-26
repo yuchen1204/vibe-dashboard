@@ -56,6 +56,9 @@ export function PathInput({ value, onChange, placeholder, id }: Props) {
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       select(suggestions[activeIndex]);
+    } else if (e.key === "Tab" && activeIndex >= 0) {
+      e.preventDefault();
+      select(suggestions[activeIndex]);
     } else if (e.key === "Escape") {
       setOpen(false);
     }
