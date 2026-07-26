@@ -8,6 +8,8 @@ rust-version.workspace = true
 shared = { path = "../shared" }
 tasks = { path = "../tasks" }
 execution = { path = "../execution" }
+glob = "0.3"
+regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,3 +20,4 @@ chrono.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 sqlx.workspace = true
+walkdir = "2"

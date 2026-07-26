@@ -83,6 +83,8 @@ pub struct ExecutionJob {
 pub struct ExecuteTodo {
     #[serde(default)]
     pub agent_type: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -28,12 +28,15 @@ pub trait JobNotifier: Send + Sync {
 /// 6. 终态时更新 todo 状态，从 active 表移除
 ///
 /// 返回刚创建的 job（status: pending）。后台任务会异步更新状态。
+///
+/// `custom_prompt` 可选，如果提供则覆盖 todo.title + description 生成的默认 prompt。
 pub async fn execute_todo(
     pool: &SqlitePool,
     executor: Arc<ExecutorManager>,
     notifier: Arc<dyn JobNotifier>,
     todo_id: &str,
     agent_type: &str,
+    custom_prompt: Option<&str>,
 ) -> AppResult<ExecutionJob> {
     // ---------- 1. 获取任务层级 ----------
     let todo = tasks::repo::get_todo(pool, todo_id).await?;
@@ -41,10 +44,14 @@ pub async fn execute_todo(
     let ws = tasks::repo::get_workspace(pool, &target.workspace_id).await?;
 
     let ws_path = std::path::Path::new(&ws.workspace.path);
-    let prompt = format!(
-        "Task: {}. Description: {}. Implement this change in the codebase. Create or modify files as needed. Do not ask for clarification.",
-        todo.title, todo.description
-    );
+    let prompt = custom_prompt
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| {
+            format!(
+                "Task: {}. Description: {}. Implement this change in the codebase. Create or modify files as needed. Do not ask for clarification.",
+                todo.title, todo.description
+            )
+        });
 
     // ---------- 2. 创建 job 记录 ----------
     let job = repo::create_job(pool, todo_id, &prompt, agent_type).await?;

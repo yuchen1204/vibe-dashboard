@@ -42,8 +42,12 @@ pub async fn run_agent(
 你有以下能力：
 1. 查看当前 workspace 的 targets（里程碑）和 todos（任务）
 2. 创建新的 todo
-3. 执行 todo（调度 coding agent 去实现）
-4. 查询执行结果
+3. 阅读 workspace 中的文件内容（read_file），搜索文件内容（grep_files）
+4. 执行 todo（调度 coding agent 去实现，可以自定义 prompt 来指导 coding agent）
+5. 查询执行结果
+
+使用 read_file 和 grep_files 工具可以了解项目代码结构，然后生成更精准的 task prompt 给 coding agent。
+当你调用 execute_todo 时，可以结合阅读代码获得的信息，编写详细的 prompt 来指导 coding agent 具体要做什么。
 
 请用中文回答。每次只调用一个工具，不要同时调用多个。
 在调用工具后，根据工具返回的结果给用户一个清晰的总结。"#.to_string();

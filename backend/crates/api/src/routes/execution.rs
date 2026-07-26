@@ -110,6 +110,7 @@ pub async fn execute_todo(
         notifier as std::sync::Arc<dyn JobNotifier>,
         &tid,
         &agent_type,
+        input.prompt.as_deref(),
     )
     .await?;
 

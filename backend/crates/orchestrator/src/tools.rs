@@ -48,6 +48,8 @@ pub async fn execute_tool(
         "create_todo" => cmd_create_todo(pool, arguments).await,
         "execute_todo" => cmd_execute_todo(pool, arguments, ctx).await,
         "get_job_result" => cmd_get_job_result(pool, arguments).await,
+        "read_file" => cmd_read_file(pool, workspace_id, arguments).await,
+        "grep_files" => cmd_grep_files(pool, workspace_id, arguments).await,
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -113,13 +115,17 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: ToolFunction {
                 name: "execute_todo".to_string(),
-                description: "Execute a todo by dispatching a coding agent. Returns the job ID.".to_string(),
+                description: "Execute a todo by dispatching a coding agent. You can provide a custom prompt to guide what the coding agent should do. Use read_file and grep_files first to understand the codebase, then craft a detailed prompt.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
                         "todo_id": {
                             "type": "string",
                             "description": "ID of the todo to execute"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Optional custom prompt for the coding agent. If omitted, the todo title and description are used as the prompt."
                         }
                     },
                     "required": ["todo_id"]
@@ -140,6 +146,52 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         }
                     },
                     "required": ["job_id"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "read_file".to_string(),
+                description: "Read the contents of a file in the workspace".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path to the file from the workspace root (e.g. src/main.rs, Cargo.toml)"
+                        },
+                        "max_lines": {
+                            "type": "integer",
+                            "description": "Optional: maximum number of lines to read (default: 200)"
+                        }
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: "grep_files".to_string(),
+                description: "Search for a pattern in files within the workspace. Returns matching lines with file paths.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "The search pattern (supports regex)"
+                        },
+                        "glob": {
+                            "type": "string",
+                            "description": "Optional: file glob pattern to filter by (e.g. **/*.rs, **/*.tsx). If omitted, searches all files."
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Optional: maximum number of results to return (default: 50)"
+                        }
+                    },
+                    "required": ["pattern"]
                 }),
             },
         },
@@ -228,6 +280,8 @@ async fn cmd_execute_todo(pool: &SqlitePool, args: &Value, ctx: &ToolContext) ->
         .and_then(|v| v.as_str())
         .ok_or("missing todo_id")?;
 
+    let custom_prompt = args.get("prompt").and_then(|v| v.as_str());
+
     let (executor, notifier) = match (&ctx.executor, &ctx.notifier) {
         (Some(exec), Some(notif)) => (exec.clone(), notif.clone()),
         _ => {
@@ -236,12 +290,13 @@ async fn cmd_execute_todo(pool: &SqlitePool, args: &Value, ctx: &ToolContext) ->
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let prompt = format!(
+            let default_prompt = format!(
                 "Execute the following task:\n\nTitle: {}\nDescription: {}\n\nPlease implement this change.",
                 todo.title, todo.description
             );
+            let prompt = custom_prompt.unwrap_or(&default_prompt);
 
-            let job = execution::repo::create_job(pool, todo_id, &prompt, "claude-code")
+            let job = execution::repo::create_job(pool, todo_id, prompt, "claude-code")
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -252,9 +307,25 @@ async fn cmd_execute_todo(pool: &SqlitePool, args: &Value, ctx: &ToolContext) ->
         }
     };
 
-    let job = execution::dispatch::execute_todo(pool, executor, notifier, todo_id, "claude-code")
+    let todo = tasks::repo::get_todo(pool, todo_id)
         .await
         .map_err(|e| e.to_string())?;
+
+    // If a custom prompt is provided, override the todo's description for this execution
+    let effective_prompt = if let Some(p) = custom_prompt {
+        p.to_string()
+    } else {
+        format!(
+            "Task: {}. Description: {}. Implement this change in the codebase. Create or modify files as needed. Do not ask for clarification.",
+            todo.title, todo.description
+        )
+    };
+
+    let job = execution::dispatch::execute_todo(
+        pool, executor, notifier, todo_id, "claude-code", Some(&effective_prompt),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(format!(
         "Job created and dispatched (id: {}, status: {}). A coding agent is now working on this task.",
@@ -282,6 +353,161 @@ async fn cmd_get_job_result(pool: &SqlitePool, args: &Value) -> Result<String, S
     ))
 }
 
+/// read_file - 读取工作区中的文件内容
+async fn cmd_read_file(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    args: &Value,
+) -> Result<String, String> {
+    let rel_path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("missing path")?;
+    let max_lines = args
+        .get("max_lines")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(200) as usize;
+
+    // 获取 workspace 实际路径
+    let ws = tasks::repo::get_workspace(pool, workspace_id)
+        .await
+        .map_err(|e| format!("failed to get workspace: {e}"))?;
+
+    let full_path = std::path::Path::new(&ws.workspace.path).join(rel_path);
+
+    // 安全校验：确保路径在 workspace 内，防止路径穿越
+    let canonical_ws = std::path::Path::new(&ws.workspace.path)
+        .canonicalize()
+        .map_err(|e| format!("failed to canonicalize workspace path: {e}"))?;
+    let canonical_target = full_path
+        .canonicalize()
+        .map_err(|e| format!("file not found or inaccessible: {e}"))?;
+    if !canonical_target.starts_with(&canonical_ws) {
+        return Err("path is outside the workspace directory".to_string());
+    }
+
+    // 读取文件
+    let content = tokio::fs::read_to_string(&full_path)
+        .await
+        .map_err(|e| format!("failed to read file: {e}"))?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+
+    if total <= max_lines {
+        Ok(format!("```\n{}\n```\n\n*{} lines total*", content, total))
+    } else {
+        let snippet = lines[..max_lines].join("\n");
+        Ok(format!(
+            "```\n{}\n...\n```\n\n*{} lines total (showing first {})*",
+            snippet, total, max_lines
+        ))
+    }
+}
+
+/// grep_files - 在工作区中搜索文件内容
+async fn cmd_grep_files(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    args: &Value,
+) -> Result<String, String> {
+    let pattern = args
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .ok_or("missing pattern")?;
+    let glob = args.get("glob").and_then(|v| v.as_str());
+    let max_results = args
+        .get("max_results")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50) as usize;
+
+    // 获取 workspace 实际路径
+    let ws = tasks::repo::get_workspace(pool, workspace_id)
+        .await
+        .map_err(|e| format!("failed to get workspace: {e}"))?;
+
+    let ws_path = std::path::Path::new(&ws.workspace.path);
+
+    // 编译正则
+    let re = regex::Regex::new(pattern).map_err(|e| format!("invalid regex: {e}"))?;
+
+    // 构建文件匹配器
+    let glob_matcher = glob.map(|g| glob::Pattern::new(g).ok());
+
+    // 使用 walkdir 遍历文件
+    let mut results: Vec<String> = Vec::new();
+    let mut count = 0;
+
+    for entry in walkdir::WalkDir::new(ws_path)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            // 跳过 .git 目录和 node_modules
+            if e.file_type().is_dir() {
+                return name != ".git" && name != "node_modules" && name != "target";
+            }
+            true
+        })
+    {
+        if count >= max_results {
+            break;
+        }
+
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        // 检查 glob 匹配
+        if let Some(ref matcher) = glob_matcher {
+            if let Some(ref m) = matcher {
+                if !m.matches(entry.path().to_string_lossy().as_ref()) {
+                    continue;
+                }
+            }
+        }
+
+        // 读取文件内容
+        let content = match tokio::fs::read_to_string(entry.path()).await {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // 搜索匹配行
+        let rel_path = entry
+            .path()
+            .strip_prefix(ws_path)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .to_string();
+
+        for (line_no, line) in content.lines().enumerate() {
+            if count >= max_results {
+                break;
+            }
+            if re.is_match(line) {
+                results.push(format!("{}:{}: {}", rel_path, line_no + 1, line.trim()));
+                count += 1;
+            }
+        }
+    }
+
+    if results.is_empty() {
+        return Ok("No matches found.".to_string());
+    }
+
+    let output = results.join("\n");
+    Ok(format!(
+        "Found {} matches:\n```\n{}\n```",
+        results.len(),
+        output
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,7 +515,7 @@ mod tests {
     #[test]
     fn tool_definitions_count() {
         let defs = tool_definitions();
-        assert_eq!(defs.len(), 5);
+        assert_eq!(defs.len(), 7);
     }
 
     #[test]
